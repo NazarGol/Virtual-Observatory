@@ -12,4 +12,6 @@ export * from "./bodies.js";
 export * from "./session.js";
 export * from "./measure.js";
 export * from "./events.js";
+export * from "./annotate.js";
+export * from "./notebook.js";
 export { GALACTIC_TO_ICRS } from "./galactic_icrs_matrix.js";
