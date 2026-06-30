@@ -88,24 +88,26 @@ async function main() {
   const positions = new Float32Array(N*3);
   const colors = new Float32Array(N*3);
   const sizes = new Float32Array(N);
-  const baseColor = stars.map((s) => {
-    const c = tint(s.bp_rp ?? 0.6);
-    const b = Math.max(0.15, Math.min(1, (6 - s.mag) / 8));
-    return [c[0]*(0.5+0.5*b), c[1]*(0.5+0.5*b), c[2]*(0.5+0.5*b)];
-  });
-  stars.forEach((_, i) => { sizes[i] = 5 + 24*Math.max(0.15, Math.min(1, (6 - stars[i].mag)/8)); });
+  // Stars are point sources: fixed screen-pixel size, brightness from magnitude (mag is
+  // fixed here -- Stage 2 rotation doesn't change distance -- so luminance is precomputed).
+  const lumOf = (mag) => Math.max(0.05, Math.min(1, Math.pow((7.5 - mag) / 9.0, 1.6)));
+  const sizeOf = (mag) => 1.7 + Math.max(0, 2.2 - mag) * 1.15;
+  const baseColor = stars.map((s) => { const c = tint(s.bp_rp ?? 0.6), l = lumOf(s.mag);
+    return [c[0]*l, c[1]*l, c[2]*l]; });
+  stars.forEach((_, i) => { sizes[i] = sizeOf(stars[i].mag); });
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geom.setAttribute("psize", new THREE.BufferAttribute(sizes, 1));
+  const dpr = Math.min(devicePixelRatio, 2);
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
-    vertexShader: `attribute float psize; varying vec3 vC; void main(){ vC=color;
-      vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=psize*(300.0/-mv.z);
-      gl_Position=projectionMatrix*mv; }`,
+    uniforms: { uDpr: { value: dpr } },
+    vertexShader: `attribute float psize; varying vec3 vC; uniform float uDpr; void main(){ vC=color;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_PointSize=psize*uDpr; }`,
     fragmentShader: `varying vec3 vC; void main(){ vec2 d=gl_PointCoord-vec2(0.5);
-      float r=length(d); if(r>0.5) discard; gl_FragColor=vec4(vC, smoothstep(0.5,0.0,r)); }`,
+      float r=length(d); if(r>0.5) discard; gl_FragColor=vec4(vC, smoothstep(0.5,0.06,r)); }`,
   });
   scene.add(new THREE.Points(geom, mat));
 

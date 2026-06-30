@@ -18,15 +18,29 @@ function main(): void {
   const argv = process.argv.slice(2);
   let catalogRel = "../catalog/test_stars.json";
   let epoch = 0;
+  let alphaCen = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--catalog") {
       const p = argv[++i];
       catalogRel = p.startsWith("/") ? p : "../" + p;
     } else if (argv[i] === "--epoch") epoch = Number(argv[++i]);
+    else if (argv[i] === "--alpha-cen") alphaCen = true;
   }
 
   const catalog = JSON.parse(readFileSync(here(catalogRel), "utf8")) as Catalog;
   const world = parseWorld(JSON.parse(readFileSync(here("../worlds/sol.world.json"), "utf8")));
+  let vantage = world.name;
+
+  if (alphaCen) {
+    // Relocate the Stage-1 observer to Alpha Cen by moving the host star there; the planet
+    // apparatus (pole, rotation, lat/lon) stays generic. "An Earth-like world at Alpha Cen."
+    const ac = catalog.stars.find((s) => s.id === "HIP71683" || s.name === "Alpha Centauri A");
+    if (!ac) throw new Error("Alpha Centauri A (HIP71683) not in catalog");
+    (world.host_star as { galactic_xyz_pc: number[]; space_velocity_kms: number[] }).galactic_xyz_pc = ac.pos_pc;
+    (world.host_star as { galactic_xyz_pc: number[]; space_velocity_kms: number[] }).space_velocity_kms = [0, 0, 0];
+    vantage = "Alpha Centauri vantage";
+  }
+
   const session = new SkySession(catalog, world);
   session.recomputeInertial(epoch);
 
@@ -45,7 +59,7 @@ function main(): void {
 
   const out = {
     generated_by: "tools/emit_horizontal.ts",
-    world: world.name,
+    world: vantage,
     epoch_years_since_j2000: epoch,
     orientation: {
       // Same field names as the engine's PlanetOrientation, so the renderer consumes the
