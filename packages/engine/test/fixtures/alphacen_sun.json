@@ -1,0 +1,14 @@
+{
+  "observer_pos_pc": [
+    0.9486611090119357,
+    -0.9246553212042513,
+    -0.01571482255879586
+  ],
+  "sun_id": "SOL",
+  "expected_ra_deg": 39.90206599999998,
+  "expected_dec_deg": 60.83397500000004,
+  "expected_distance_pc": 1.3248367138750146,
+  "expected_mag": 0.4408117738812489,
+  "constellation": "Cassiopeia",
+  "note": "Antipodal to Alpha Cen's Earth direction; published result places the Sun in Cassiopeia."
+}

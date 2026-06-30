@@ -1,0 +1,5 @@
+# Minimal deps to regenerate the validation fixtures (make_fixtures.py).
+# This is all CI needs -- the fixture oracle does not query any archive.
+astropy>=6.0,<9
+numpy>=1.26
+scipy>=1.11

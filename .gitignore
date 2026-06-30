@@ -1,0 +1,17 @@
+# Python
+bake/.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+packages/*/dist/
+*.tsbuildinfo
+
+# Generated catalog data (large; the real Gaia bake output is not committed).
+# The curated catalog/test_stars.json IS committed (the offline validation set).
+catalog/local_volume*
+renderer/data/
+
+# OS
+.DS_Store

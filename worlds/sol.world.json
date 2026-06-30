@@ -1,0 +1,33 @@
+{
+  "schema_version": "0.1",
+  "name": "Sol (calibration world)",
+  "note": "host_star at the galactic origin makes this the Sol world used by the section 3 validation (observer at origin == Earth vantage). The observatory CONSUMES this file; it never generates it.",
+  "host_star": {
+    "catalog_id": null,
+    "galactic_xyz_pc": [0, 0, 0],
+    "space_velocity_kms": [0, 0, 0],
+    "mass_msun": 1.0,
+    "luminosity_lsun": 1.0,
+    "teff_k": 5772,
+    "radius_rsun": 1.0
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1.0,
+    "rotation_period_s": 86164,
+    "axial_tilt_deg": 23.4,
+    "north_pole_inertial": { "ra_deg": 0, "dec_deg": 90 },
+    "orbit": { "a_au": 1.0, "e": 0.0, "i_deg": 0, "Omega_deg": 0, "omega_deg": 0, "M0_deg": 0, "epoch_jd": 2451545.0 }
+  },
+  "moons": [
+    {
+      "name": "Luna",
+      "radius_km": 1737,
+      "albedo": 0.12,
+      "orbit": { "a_au": 0.00257, "e": 0.0549, "i_deg": 5.145, "Omega_deg": 125.08, "omega_deg": 318.15, "M0_deg": 135.27, "epoch_jd": 2451545.0 }
+    }
+  ],
+  "observer": { "lat_deg": 0.0, "lon_deg": 0.0, "elevation_m": 0 },
+  "epoch_jd": 2451545.0,
+  "catalog_ref": "catalog/test_stars.json"
+}

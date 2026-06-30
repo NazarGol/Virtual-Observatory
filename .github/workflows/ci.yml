@@ -1,0 +1,40 @@
+name: ci
+
+# Spec section 3 / section 6: the validation suite is the load-bearing correctness
+# mechanism, so it runs on every push and PR. There is no observed sky from any star but
+# ours; CI is what anchors the engine to the one known case (Earth).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Regenerate the astropy oracle fresh, so the TS engine is validated against the
+      #     CURRENT astropy, not just the committed fixtures. ---
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install fixture deps
+        run: pip install -r bake/requirements-fixtures.txt
+      - name: Regenerate validation fixtures (astropy oracle)
+        working-directory: bake
+        run: python make_fixtures.py
+
+      # --- Pure-TS engine: typecheck, validation suite (sections 3.1-3.4), no-three guard. ---
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install node deps
+        run: npm ci
+      - name: Typecheck engine
+        run: npm run typecheck
+      - name: Engine rendering-free guard (section 1.1)
+        run: npm run guard:no-three
+      - name: Validation suite (sections 3.1-3.4)
+        run: npm test

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Virtual Observatory — throwaway sky (0d)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
+      #hud {
+        position: fixed; top: 10px; left: 12px; color: #aeb6c8;
+        font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; pointer-events: none;
+        text-shadow: 0 0 4px #000;
+      }
+      #hud b { color: #e8edf6; }
+      #pick { position: fixed; bottom: 12px; left: 12px; color: #cfe8ff;
+        font: 12px/1.4 ui-monospace, monospace; text-shadow: 0 0 4px #000; }
+      #err { position: fixed; inset: 0; display: none; place-content: center;
+        color: #ff9; font: 14px/1.6 ui-monospace, monospace; text-align: center; padding: 2rem; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">loading…</div>
+    <div id="pick"></div>
+    <div id="err"></div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

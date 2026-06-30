@@ -1,0 +1,16 @@
+{
+  "name": "virtual-observatory",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A relocated real sky: real stars moved to a new point in the galaxy, recomputed.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm test -w @vobs/engine",
+    "build": "npm run build -w @vobs/engine",
+    "typecheck": "npm run typecheck -w @vobs/engine",
+    "guard:no-three": "sh scripts/guard_no_three.sh",
+    "emit-sky": "node --import tsx tools/emit_sky.ts"
+  }
+}
