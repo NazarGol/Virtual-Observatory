@@ -25,6 +25,9 @@ jobs:
       - name: Regenerate validation fixtures (astropy oracle)
         working-directory: bake
         run: python make_fixtures.py
+      - name: Regenerate Stage-2 fixtures (trig oracle)
+        working-directory: bake
+        run: python make_stage2_fixtures.py
 
       # --- Pure-TS engine: typecheck, validation suite (sections 3.1-3.4), no-three guard. ---
       - uses: actions/setup-node@v4

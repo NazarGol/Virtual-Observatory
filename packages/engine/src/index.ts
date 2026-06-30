@@ -6,4 +6,6 @@ export * from "./vec.js";
 export * from "./frames.js";
 export * from "./catalog.js";
 export * from "./relocate.js";
+export * from "./horizontal.js";
+export * from "./world.js";
 export { GALACTIC_TO_ICRS } from "./galactic_icrs_matrix.js";
