@@ -5,14 +5,17 @@ bright-star supplement, transformed into the galactic Cartesian catalog the engi
 This is the DATA deliverable. It is separate from the validation path: the section 3 tests
 run offline from the curated catalog/test_stars.json and never touch this. Running this
 hits the Gaia archive (and Vizier) over the network and can return a large table, so it is
-parameterised; the default is a runnable bright subset, and `--full` removes the limits.
+parameterised; the default is a naked-eye-complete bright sky, and `--full` removes the
+magnitude limit entirely (millions of rows -- slow).
 
 Output schema matches catalog/test_stars.json exactly, so the engine and renderer consume
-either interchangeably.
+either interchangeably. Star construction is vectorised (one SkyCoord per source set, one
+frame transform) so it scales from a few hundred to the full volume without a Python loop
+over astropy objects.
 
 Examples:
-    python bake_catalog.py                       # bright subset (G<6.5, <=5000 rows) + Hipparcos
-    python bake_catalog.py --maglim 4 --limit 500
+    python bake_catalog.py                       # naked-eye sky: Gaia G<6.5 + Hipparcos V<6.5
+    python bake_catalog.py --maglim 8            # deeper (binoculars)
     python bake_catalog.py --full                # entire 300 pc volume (large, slow)
     python bake_catalog.py --no-hipparcos --out catalog/gaia_only.json
 
@@ -43,7 +46,7 @@ J2000 = Time("J2000.0")
 
 
 def jnum(x, default):
-    """Coerce a (possibly masked / NaN / None) table value to a plain finite float."""
+    """Coerce a single (possibly masked / NaN / None) value to a plain finite float."""
     try:
         if x is None or np.ma.is_masked(x):
             return default
@@ -53,18 +56,27 @@ def jnum(x, default):
         return default
 
 
-def galactic_cartesian(sc):
+def fcol(tbl, name, fill=np.nan):
+    """Extract a table column as a plain float ndarray, masked entries -> fill."""
+    c = tbl[name]
+    arr = np.asarray(np.ma.getdata(c), dtype=float)
+    return np.where(np.ma.getmaskarray(c), fill, arr)
+
+
+def galactic_cartesian_arrays(sc):
+    """Vectorised: SkyCoord (N sources) -> (pos[N,3] pc, vel[N,3] km/s) in galactic Cartesian."""
     gal = sc.galactic
     gal.representation_type = CartesianRepresentation
     gal.differential_type = CartesianDifferential
     cart = gal.cartesian
-    pos = [float(cart.x.to_value(u.pc)), float(cart.y.to_value(u.pc)), float(cart.z.to_value(u.pc))]
-    diff = cart.differentials["s"]
-    vel = [
-        float(diff.d_x.to_value(u.km / u.s)),
-        float(diff.d_y.to_value(u.km / u.s)),
-        float(diff.d_z.to_value(u.km / u.s)),
-    ]
+    pos = np.stack(
+        [cart.x.to_value(u.pc), cart.y.to_value(u.pc), cart.z.to_value(u.pc)], axis=-1
+    )
+    d = cart.differentials["s"]
+    vel = np.stack(
+        [d.d_x.to_value(u.km / u.s), d.d_y.to_value(u.km / u.s), d.d_z.to_value(u.km / u.s)],
+        axis=-1,
+    )
     return pos, vel
 
 
@@ -89,42 +101,44 @@ def fetch_gaia(radius_pc, maglim, limit, full):
     """
     print(f"[gaia] querying DR3: r<{radius_pc}pc (plx>{min_parallax:.3f}mas)"
           f"{'' if full else f', G<{maglim}, TOP {limit}'} ...", flush=True)
-    job = Gaia.launch_job_async(adql)
-    tbl = job.get_results()
-    print(f"[gaia] {len(tbl)} rows", flush=True)
+    tbl = Gaia.launch_job_async(adql).get_results()
+    print(f"[gaia] {len(tbl)} rows returned", flush=True)
+    if len(tbl) == 0:
+        return [], 0
+
+    ra, dec = fcol(tbl, "ra"), fcol(tbl, "dec")
+    plx = fcol(tbl, "parallax")
+    pmra, pmdec = fcol(tbl, "pmra"), fcol(tbl, "pmdec")
+    rv = fcol(tbl, "radial_velocity")
+    gmag, bprp = fcol(tbl, "phot_g_mean_mag"), fcol(tbl, "bp_rp")
+    r_geo = fcol(tbl, "r_med_geo")
+    sid = np.asarray(tbl["source_id"], dtype="int64")
+
+    dist = np.where(np.isfinite(r_geo), r_geo, np.where(plx > 0, 1000.0 / plx, np.nan))
+    has_rv = np.isfinite(rv)
+    rv_f = np.where(has_rv, rv, 0.0)
+    ok = np.isfinite(dist) & (dist > 0) & np.isfinite(pmra) & np.isfinite(pmdec) & np.isfinite(gmag)
+    idx = np.where(ok)[0]
+
+    sc = SkyCoord(
+        ra=ra[idx] * u.deg, dec=dec[idx] * u.deg, distance=dist[idx] * u.pc,
+        pm_ra_cosdec=pmra[idx] * u.mas / u.yr, pm_dec=pmdec[idx] * u.mas / u.yr,
+        radial_velocity=rv_f[idx] * u.km / u.s, obstime=J2000, frame="icrs",
+    )
+    pos, vel = galactic_cartesian_arrays(sc)
 
     stars = []
-    for r in tbl:
-        plx = float(r["parallax"])
-        r_geo = r["r_med_geo"]
-        if r_geo is not None and np.isfinite(r_geo):
-            dist_pc = float(r_geo)
-        elif plx > 0:
-            dist_pc = 1000.0 / plx
-        else:
-            continue
-        rv_raw = r["radial_velocity"]
-        if rv_raw is None or np.ma.is_masked(rv_raw) or not math.isfinite(float(rv_raw)):
-            has_rv, rv = False, 0.0
-        else:
-            has_rv, rv = True, float(rv_raw)
-        sc = SkyCoord(
-            ra=float(r["ra"]) * u.deg, dec=float(r["dec"]) * u.deg,
-            distance=dist_pc * u.pc,
-            pm_ra_cosdec=float(r["pmra"]) * u.mas / u.yr,
-            pm_dec=float(r["pmdec"]) * u.mas / u.yr,
-            radial_velocity=rv * u.km / u.s, obstime=J2000, frame="icrs",
-        )
-        pos, vel = galactic_cartesian(sc)
+    for k, i in enumerate(idx):
         stars.append({
-            "id": f"Gaia DR3 {int(r['source_id'])}",
-            "name": "",
-            "pos_pc": pos, "vel_kms": vel,
-            "mag_ref": jnum(r["phot_g_mean_mag"], 99.0), "d_ref_pc": dist_pc,
-            "bp_rp": jnum(r["bp_rp"], 0.8), "has_rv": has_rv,
-            "_ra": float(r["ra"]), "_dec": float(r["dec"]),
+            "id": f"Gaia DR3 {int(sid[i])}", "name": "",
+            "pos_pc": [float(pos[k, 0]), float(pos[k, 1]), float(pos[k, 2])],
+            "vel_kms": [float(vel[k, 0]), float(vel[k, 1]), float(vel[k, 2])],
+            "mag_ref": float(gmag[i]), "d_ref_pc": float(dist[i]),
+            "bp_rp": float(bprp[i]) if np.isfinite(bprp[i]) else 0.8,
+            "has_rv": bool(has_rv[i]),
+            "_ra": float(ra[i]), "_dec": float(dec[i]),
         })
-    return stars
+    return stars, len(tbl)
 
 
 def fetch_hipparcos(radius_pc, vmaglim):
@@ -154,32 +168,39 @@ def fetch_hipparcos(radius_pc, vmaglim):
         print(f"[hip] supplement skipped ({e}); continuing with Gaia only.", file=sys.stderr)
         return []
 
+    ra, dec = fcol(tbl, "_RAJ2000"), fcol(tbl, "_DEJ2000")
+    plx = fcol(tbl, "Plx")
+    pmra, pmdec = fcol(tbl, "pmRA"), fcol(tbl, "pmDE")
+    vmag = fcol(tbl, "Vmag")
+    bv = fcol(tbl, "B-V") if "B-V" in tbl.colnames else np.full(len(tbl), np.nan)
+    hip = np.asarray(tbl["HIP"], dtype="int64")
+
+    ok = (np.isfinite(plx) & (plx > 0) & np.isfinite(ra) & np.isfinite(dec)
+          & np.isfinite(pmra) & np.isfinite(pmdec) & np.isfinite(vmag))
+    idx = np.where(ok)[0]
+    if len(idx) == 0:
+        return []
+    dist = 1000.0 / plx
+
+    # Hipparcos hip_main has no radial velocity; propagate RV=0 (has_rv=False).
+    sc = SkyCoord(
+        ra=ra[idx] * u.deg, dec=dec[idx] * u.deg, distance=dist[idx] * u.pc,
+        pm_ra_cosdec=pmra[idx] * u.mas / u.yr, pm_dec=pmdec[idx] * u.mas / u.yr,
+        radial_velocity=np.zeros(len(idx)) * u.km / u.s, obstime=J2000, frame="icrs",
+    )
+    pos, vel = galactic_cartesian_arrays(sc)
+
     stars = []
-    for r in tbl:
-        try:
-            plx = float(r["Plx"])
-            if not np.isfinite(plx) or plx <= 0:
-                continue
-            dist_pc = 1000.0 / plx
-            ra, dec = float(r["_RAJ2000"]), float(r["_DEJ2000"])
-            # Hipparcos has no radial velocity here; propagate RV=0 (has_rv=False).
-            sc = SkyCoord(
-                ra=ra * u.deg, dec=dec * u.deg, distance=dist_pc * u.pc,
-                pm_ra_cosdec=float(r["pmRA"]) * u.mas / u.yr,
-                pm_dec=float(r["pmDE"]) * u.mas / u.yr,
-                radial_velocity=0.0 * u.km / u.s, obstime=J2000, frame="icrs",
-            )
-            pos, vel = galactic_cartesian(sc)
-            bv = jnum(r["B-V"], 0.6) if "B-V" in tbl.colnames else 0.6
-            stars.append({
-                "id": f"HIP{int(r['HIP'])}", "name": "",
-                "pos_pc": pos, "vel_kms": vel,
-                "mag_ref": jnum(r["Vmag"], 99.0), "d_ref_pc": dist_pc,
-                "bp_rp": bv, "has_rv": False,
-                "_ra": ra, "_dec": dec,
-            })
-        except (ValueError, TypeError):
-            continue
+    for k, i in enumerate(idx):
+        stars.append({
+            "id": f"HIP{int(hip[i])}", "name": "",
+            "pos_pc": [float(pos[k, 0]), float(pos[k, 1]), float(pos[k, 2])],
+            "vel_kms": [float(vel[k, 0]), float(vel[k, 1]), float(vel[k, 2])],
+            "mag_ref": float(vmag[i]), "d_ref_pc": float(dist[i]),
+            "bp_rp": float(bv[i]) if np.isfinite(bv[i]) else 0.6,
+            "has_rv": False,
+            "_ra": float(ra[i]), "_dec": float(dec[i]),
+        })
     return stars
 
 
@@ -187,39 +208,36 @@ def merge_prefer_hipparcos(gaia_stars, hip_stars, sep_arcsec=2.0):
     """Append Hipparcos bright stars, dropping any Gaia row within sep_arcsec of one
     (Gaia saturates bright; prefer Hipparcos there). Simple positional dedup (section 2.3)."""
     if not hip_stars:
-        return gaia_stars
-    hip_dirs = np.array([
-        [np.cos(np.radians(s["_dec"])) * np.cos(np.radians(s["_ra"])),
-         np.cos(np.radians(s["_dec"])) * np.sin(np.radians(s["_ra"])),
-         np.sin(np.radians(s["_dec"]))] for s in hip_stars
-    ])
-    cos_tol = np.cos(np.radians(sep_arcsec / 3600.0))
-    kept = []
+        return gaia_stars, 0
+    def unit(s):
+        ra, dec = math.radians(s["_ra"]), math.radians(s["_dec"])
+        return [math.cos(dec) * math.cos(ra), math.cos(dec) * math.sin(ra), math.sin(dec)]
+    hip_dirs = np.array([unit(s) for s in hip_stars])
+    cos_tol = math.cos(math.radians(sep_arcsec / 3600.0))
+    kept, dropped = [], 0
     for g in gaia_stars:
-        gd = np.array([
-            np.cos(np.radians(g["_dec"])) * np.cos(np.radians(g["_ra"])),
-            np.cos(np.radians(g["_dec"])) * np.sin(np.radians(g["_ra"])),
-            np.sin(np.radians(g["_dec"])),
-        ])
-        if np.max(hip_dirs @ gd) >= cos_tol:
-            continue  # superseded by a Hipparcos entry
-        kept.append(g)
-    return kept + hip_stars
+        if np.max(hip_dirs @ np.array(unit(g))) >= cos_tol:
+            dropped += 1  # superseded by a Hipparcos entry
+        else:
+            kept.append(g)
+    return kept + hip_stars, dropped
 
 
 def main():
     ap = argparse.ArgumentParser(description="Bake the Gaia+Hipparcos science catalog.")
     ap.add_argument("--radius-pc", type=float, default=300.0)
-    ap.add_argument("--maglim", type=float, default=6.5, help="Gaia G limit (ignored with --full)")
-    ap.add_argument("--limit", type=int, default=5000, help="Gaia row cap (ignored with --full)")
-    ap.add_argument("--full", action="store_true", help="entire volume, no mag/row limit (large)")
+    ap.add_argument("--maglim", type=float, default=6.5,
+                    help="Gaia G limit (default 6.5 = naked eye; ignored with --full)")
+    ap.add_argument("--limit", type=int, default=200000,
+                    help="Gaia row cap (safety; ignored with --full)")
+    ap.add_argument("--full", action="store_true", help="entire volume, no mag limit (large)")
     ap.add_argument("--no-hipparcos", action="store_true")
-    ap.add_argument("--hip-vmaglim", type=float, default=4.0)
+    ap.add_argument("--hip-vmaglim", type=float, default=6.5)
     ap.add_argument("--out", default=os.path.join(REPO, "catalog", "local_volume_300pc.json"))
     args = ap.parse_args()
 
     try:
-        gaia = fetch_gaia(args.radius_pc, args.maglim, args.limit, args.full)
+        gaia, gaia_raw = fetch_gaia(args.radius_pc, args.maglim, args.limit, args.full)
         hip = [] if args.no_hipparcos else fetch_hipparcos(args.radius_pc, args.hip_vmaglim)
     except Exception as e:  # network / archive errors are expected in some environments
         print(f"\nERROR contacting the archives: {e}\n"
@@ -228,16 +246,17 @@ def main():
               file=sys.stderr)
         sys.exit(2)
 
-    stars = merge_prefer_hipparcos(gaia, hip)
+    stars, dropped = merge_prefer_hipparcos(gaia, hip)
     for s in stars:  # drop the private cross-match helpers before writing
         s.pop("_ra", None)
         s.pop("_dec", None)
 
+    capped = (not args.full) and gaia_raw >= args.limit
     catalog = {
         "schema_version": "0.1",
         "frame": "galactic_cartesian_pc",
         "epoch": "J2000.0",
-        "note": (f"Gaia DR3 (<{args.radius_pc}pc){'' if args.full else f', G<{args.maglim}, <= {args.limit} rows'}"
+        "note": (f"Gaia DR3 (<{args.radius_pc}pc){'' if args.full else f', G<{args.maglim}'}"
                  f"{'' if args.no_hipparcos else f' + Hipparcos Vmag<{args.hip_vmaglim}'}. "
                  "Bailer-Jones distances where available."),
         "stars": stars,
@@ -245,7 +264,13 @@ def main():
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(catalog, f)
-    print(f"\nwrote {len(stars)} stars -> {os.path.relpath(args.out, REPO)}")
+
+    print(f"\n[merge] gaia kept {len(gaia) - dropped} (+{dropped} superseded by Hipparcos), "
+          f"hipparcos {len(hip)}")
+    if capped:
+        print(f"WARNING: Gaia hit the TOP {args.limit} cap -- the volume is not complete to "
+              f"G<{args.maglim}. Raise --limit (or use --full) for completeness.", file=sys.stderr)
+    print(f"wrote {len(stars)} stars -> {os.path.relpath(args.out, REPO)}")
 
 
 if __name__ == "__main__":

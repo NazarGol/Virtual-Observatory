@@ -45,14 +45,24 @@ npm test                         # runs the §3 suite
 npm run typecheck
 npm run guard:no-three           # asserts the engine has zero rendering imports
 
-# 3. Eyeball it (throwaway renderer):
-npm run emit-sky                 # engine -> renderer/data/inertial_sky.json
+# 3. (optional) Bake the real science catalog — naked-eye sky, ~10.5k stars within 300 pc:
+python bake/bake_catalog.py      # Gaia G<6.5 + Hipparcos V<6.5 -> catalog/local_volume_300pc.json
+
+# 4. Eyeball it (throwaway renderer):
+npm run emit-sky                                 # curated catalog, Sol vantage
+node --import tsx tools/emit_sky.ts \
+  --catalog catalog/local_volume_300pc.json --alpha-cen   # the real sky from Alpha Cen
 # then serve renderer/ (e.g. `python3 -m http.server` in renderer/) and open it
 ```
 
-> Note: the real Gaia bake (`bake_catalog.py`) hits the Gaia archive over the network and
-> can be large; the validation suite does **not** depend on it and runs fully offline from
-> the curated `test_stars.json`.
+> Notes
+> - The real bake (`bake_catalog.py`) hits the Gaia archive + Vizier over the network. The
+>   validation suite does **not** depend on it and runs fully offline from the curated
+>   `test_stars.json`. Default is naked-eye complete (G<6.5, ~10.5k stars in 300 pc);
+>   `--maglim 8` goes deeper, `--full` takes the entire volume (millions, slow).
+> - Relocating to Alpha Cen A, its binary companion Alpha Cen B (HIP71681) correctly blazes
+>   at V≈−19 right next to the observer — a quick sanity check that the magnitude recompute
+>   is doing real inverse-square work.
 
 ## Validation
 
@@ -86,10 +96,3 @@ System generator; **retarded-time (Roemer) propagation** (the fully-correct relo
 light-time model, see ADR 0001); atmospheric refraction; telescope optics; weather;
 terrain/horizon; day-sky; photorealism; VR. The engine/render/data split exists precisely
 so these can be added later without touching the validated core.
-
-## Environment note
-
-This machine's global `npm` shim (`~/bin/npm`) is broken (points at a nonexistent
-`../lib/cli.js`); npm still works when invoked via its real CLI at
-`~/node_lib/node_modules/npm/bin/npm-cli.js`. CI uses its own Node toolchain and is
-unaffected. Fixing the shim is a one-line change — ask if you want it done.

@@ -3,8 +3,8 @@
 // engine *output*, never the engine itself, and the engine never imports the renderer.
 //
 // Usage:
-//   npm run emit-sky                      # observer at origin (Sol world), t = J2000
-//   node --import tsx tools/emit_sky.ts --alpha-cen --t 0
+//   npm run emit-sky                      # test catalog, observer at origin, t = J2000
+//   node --import tsx tools/emit_sky.ts --catalog catalog/local_volume_300pc.json --alpha-cen
 //   node --import tsx tools/emit_sky.ts --observer 1.5,-0.3,0.8 --t 10000
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -15,18 +15,34 @@ import type { Vec3 } from "../packages/engine/src/vec.js";
 
 const here = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url));
 
-function parseArgs(argv: string[]): { observer: Observer; t: number; label: string } {
+function parseArgs(
+  argv: string[],
+): { catalog: Catalog; observer: Observer; t: number; label: string } {
   let observer: Observer = { origin_pc: [0, 0, 0] };
   let t = 0;
   let label = "Sol vantage (origin), J2000";
 
-  const catalog = loadCatalog();
+  // First pass: resolve the catalog path so --alpha-cen can look up a star.
+  let catalogPath = "../catalog/test_stars.json";
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--catalog") {
+      const p = argv[++i];
+      catalogPath = p.startsWith("/") ? p : "../" + p; // relative to repo root
+    }
+  }
+  const catalog = loadCatalog(catalogPath);
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--t") t = Number(argv[++i]);
+    else if (a === "--catalog") i++; // already consumed
     else if (a === "--alpha-cen") {
-      const ac = catalog.stars.find((s) => s.name === "Alpha Centauri A");
-      if (!ac) throw new Error("Alpha Centauri A not in catalog");
+      // Alpha Cen A is HIP71683 in both the curated and the science catalog (whose
+      // Gaia/Hipparcos rows carry no proper name).
+      const ac = catalog.stars.find(
+        (s) => s.id === "HIP71683" || s.name === "Alpha Centauri A",
+      );
+      if (!ac) throw new Error("Alpha Centauri A (HIP71683) not in catalog");
       observer = { origin_pc: ac.pos_pc };
       label = "Alpha Centauri vantage";
     } else if (a === "--observer") {
@@ -37,16 +53,15 @@ function parseArgs(argv: string[]): { observer: Observer; t: number; label: stri
       label = `observer ${argv[i]}`;
     }
   }
-  return { observer, t, label };
+  return { catalog, observer, t, label };
 }
 
-function loadCatalog(): Catalog {
-  return JSON.parse(readFileSync(here("../catalog/test_stars.json"), "utf8")) as Catalog;
+function loadCatalog(relPath: string): Catalog {
+  return JSON.parse(readFileSync(here(relPath), "utf8")) as Catalog;
 }
 
 function main(): void {
-  const catalog = loadCatalog();
-  const { observer, t, label } = parseArgs(process.argv.slice(2));
+  const { catalog, observer, t, label } = parseArgs(process.argv.slice(2));
 
   const sky = relocateSky(catalog, observer, t).map((s) => ({
     id: s.id,
