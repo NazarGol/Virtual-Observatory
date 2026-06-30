@@ -8,6 +8,10 @@ node_modules/
 packages/*/dist/
 *.tsbuildinfo
 
+# App build + generated static data
+packages/app/dist/
+packages/app/public/data/
+
 # Generated catalog data (large; the real Gaia bake output is not committed).
 # The curated catalog/test_stars.json IS committed (the offline validation set).
 catalog/local_volume*
