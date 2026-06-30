@@ -33,6 +33,9 @@ button:disabled { opacity: .45; cursor: default; }
 .mitem.broken { border-color: #5a2b2b; } .mitem.broken .val { color: #ffb3b3; }
 .x { background: transparent; border: none; color: #7d8cab; cursor: pointer; padding: 0 4px; }
 .x:hover { color: #ff9a9a; }
+.link { background: transparent; border: none; color: #bfe6ff; cursor: pointer; padding: 0; text-align: left;
+  font: inherit; word-break: break-word; }
+.link:hover { color: #eaf3ff; text-decoration: underline; }
 
 .timebar { grid-column: 1 / 2; display: flex; align-items: center; gap: 12px; padding: 9px 14px;
   background: #070a12; border-top: 1px solid #16243c; }

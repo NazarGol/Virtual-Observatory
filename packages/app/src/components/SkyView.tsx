@@ -6,6 +6,8 @@ interface Props {
   stars: StarPoint[];
   selectionDirs: Vec3[];
   overlays: Vec3[][];
+  figures: Vec3[][];
+  labels: { dir: Vec3; text: string }[];
   onHoverIndex: (i: number | null) => void;
   onPickIndex: (i: number | null) => void;
   onFov: (fov: number) => void;
@@ -33,6 +35,8 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setStars(props.stars); }, [props.stars]);
   useEffect(() => { fieldRef.current?.setSelection(props.selectionDirs); }, [props.selectionDirs]);
   useEffect(() => { fieldRef.current?.setOverlays(props.overlays); }, [props.overlays]);
+  useEffect(() => { fieldRef.current?.setFigures(props.figures); }, [props.figures]);
+  useEffect(() => { fieldRef.current?.setLabels(props.labels); }, [props.labels]);
 
   return <div className="sky" ref={mountRef} />;
 }

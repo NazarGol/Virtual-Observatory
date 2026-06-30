@@ -46,6 +46,8 @@ export class StarField {
   private geom?: THREE.BufferGeometry;
   private selGroup = new THREE.Group();
   private overlayGroup = new THREE.Group();
+  private figureGroup = new THREE.Group();
+  private labelGroup = new THREE.Group();
   private ringTex = ringTexture();
 
   private yaw = 0;
@@ -70,7 +72,7 @@ export class StarField {
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(this.fov, container.clientWidth / container.clientHeight, 0.1, 1000);
-    this.scene.add(this.selGroup, this.overlayGroup);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup);
 
     // faint celestial-equator ring for orientation
     const eq = new THREE.BufferGeometry().setFromPoints(
@@ -169,6 +171,21 @@ export class StarField {
     }
   }
 
+  /** Annotation figure edges (constellations / sketches), drawn warm to distinguish them. */
+  setFigures(arcs: Vec3[][]): void {
+    this.figureGroup.clear();
+    for (const arc of arcs) {
+      const g = new THREE.BufferGeometry().setFromPoints(arc.map((d) => new THREE.Vector3(d[0] * R, d[1] * R, d[2] * R)));
+      this.figureGroup.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffcf6b })));
+    }
+  }
+
+  /** Text labels pinned to inertial directions (anchored to objects by the React layer). */
+  setLabels(labels: { dir: Vec3; text: string }[]): void {
+    this.labelGroup.clear();
+    for (const l of labels) this.labelGroup.add(makeTextSprite(l.text, l.dir));
+  }
+
   resize(): void {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -193,6 +210,26 @@ export class StarField {
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
+}
+
+const R_LABEL = 100;
+function makeTextSprite(text: string, dir: Vec3, color = "#ffe1a3"): THREE.Sprite {
+  const font = 26, pad = 7;
+  const meas = document.createElement("canvas").getContext("2d")!;
+  meas.font = `${font}px ui-monospace, monospace`;
+  const w = Math.ceil(meas.measureText(text).width) + pad * 2;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = font + pad * 2;
+  const g = c.getContext("2d")!;
+  g.font = `${font}px ui-monospace, monospace`;
+  g.fillStyle = color; g.textBaseline = "middle"; g.textAlign = "left";
+  g.shadowColor = "#000"; g.shadowBlur = 4;
+  g.fillText(text, pad, c.height / 2);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+  sp.position.set(dir[0] * R_LABEL, dir[1] * R_LABEL, dir[2] * R_LABEL);
+  sp.center.set(-0.05, 0.5); // sit just to the right of the anchor
+  sp.scale.set((c.width / c.height) * 3.4, 3.4, 1);
+  return sp;
 }
 
 /** Geodesic (great-circle) arc between two unit directions, as N+1 sampled unit vectors. */
