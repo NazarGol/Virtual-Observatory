@@ -11,6 +11,8 @@
     "build": "npm run build -w @vobs/engine",
     "typecheck": "npm run typecheck -w @vobs/engine",
     "guard:no-three": "sh scripts/guard_no_three.sh",
-    "emit-sky": "node --import tsx tools/emit_sky.ts"
+    "emit-sky": "node --import tsx tools/emit_sky.ts",
+    "emit-horizon": "node --import tsx tools/emit_horizontal.ts",
+    "scrub-bench": "node --import tsx tools/scrub_bench.ts"
   }
 }

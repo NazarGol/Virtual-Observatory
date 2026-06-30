@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Virtual Observatory — horizon dome (Phase 1)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #04050a; overflow: hidden; color: #cdd6e6;
+        font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+      #hud { position: fixed; top: 10px; left: 12px; pointer-events: none; text-shadow: 0 0 4px #000; }
+      #hud b { color: #eef2fb; }
+      #pick { position: fixed; bottom: 64px; left: 12px; color: #cfe8ff; text-shadow: 0 0 4px #000; }
+      #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 14px; display: flex;
+        gap: 12px; align-items: center; background: linear-gradient(transparent, #04050aee 40%); }
+      #bar input[type=range] { flex: 1; }
+      #bar button { background: #1a2740; color: #cdd6e6; border: 1px solid #2c3f63;
+        border-radius: 5px; padding: 4px 12px; cursor: pointer; font: inherit; }
+      #clock { min-width: 120px; color: #eef2fb; }
+      #err { position: fixed; inset: 0; display: none; place-content: center; color: #ff9;
+        text-align: center; padding: 2rem; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">loading…</div>
+    <div id="pick"></div>
+    <div id="err"></div>
+    <div id="bar">
+      <button id="play">▶ play</button>
+      <span id="clock">00:00</span>
+      <input id="time" type="range" min="0" max="1440" value="0" step="1" />
+      <span>1 sidereal day</span>
+    </div>
+    <script type="importmap">
+      { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script type="module" src="./horizon.js"></script>
+  </body>
+</html>

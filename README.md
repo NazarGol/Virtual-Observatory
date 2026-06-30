@@ -23,10 +23,14 @@ packages/engine/          pure TypeScript engine (NO rendering imports, enforced
   src/frames.ts           galactic <-> ICRS
   src/galactic_icrs_matrix.ts   AUTO-GENERATED frame definition (from astropy)
   test/                   the §3 validation suite
+  src/horizontal.ts       Stage 2: inertial -> alt/az (Phase 1)
+  src/bodies.ts           Keplerian host star / moons / siblings (Phase 1)
+  src/session.ts          SkySession: sim/render decoupling (Phase 1)
 catalog/                  static catalog artifacts (test_stars.json committed; bake output gitignored)
 worlds/                   hand-authored world.json (the Sol world for §3)
-renderer/                 throwaway dot renderer (0d) — eyeballing only, not a deliverable
-tools/emit_sky.ts         run the engine -> JSON for the renderer
+renderer/                 throwaway renderers (0d/Phase 1) — eyeballing only, not a deliverable
+  main.js                 inertial dot sphere; horizon.js — alt/az dome + time scrubbing
+tools/                    emit_sky.ts, emit_horizontal.ts, scrub_bench.ts (engine -> JSON / demos)
 docs/adr/                 architecture decision records
 ```
 
@@ -48,11 +52,13 @@ npm run guard:no-three           # asserts the engine has zero rendering imports
 # 3. (optional) Bake the real science catalog — naked-eye sky, ~10.5k stars within 300 pc:
 python bake/bake_catalog.py      # Gaia G<6.5 + Hipparcos V<6.5 -> catalog/local_volume_300pc.json
 
-# 4. Eyeball it (throwaway renderer):
-npm run emit-sky                                 # curated catalog, Sol vantage
+# 4. Eyeball it (throwaway renderers):
+npm run emit-sky                                 # inertial sphere (renderer/index.html)
+npm run emit-horizon                             # alt/az dome with time slider (renderer/horizon.html)
+npm run scrub-bench                              # prove the sim/render decoupling on 10k stars
 node --import tsx tools/emit_sky.ts \
   --catalog catalog/local_volume_300pc.json --alpha-cen   # the real sky from Alpha Cen
-# then serve renderer/ (e.g. `python3 -m http.server` in renderer/) and open it
+# then serve renderer/ (e.g. `python3 -m http.server` in renderer/) and open index.html / horizon.html
 ```
 
 > Notes
@@ -77,6 +83,22 @@ The four anchor tests (spec §3), all passing at machine precision (≈1e-10″)
 
 The galactic→ICRS rotation is the astropy-authoritative matrix, baked into the engine; the
 engine reimplements only the runtime hot path and is validated against the fixtures.
+
+**Phase 1 (apparatus + time)** — Stage-2 local horizontal frame, Keplerian bodies, and
+sim/render decoupling, all green (19 tests total):
+
+| Test | What it pins | Result |
+|------|--------------|--------|
+| Stage-2 grid | alt/az matches an independent trig oracle over 1500 (ra,dec,lat,lon,t) cases | ≤6e-12° |
+| rise/set azimuth | §6 acceptance: matches the hand value `acos(sin d / cos φ)` | exact |
+| drift through Stage 2 | §6 acceptance: Barnard's ~53°/10⁴yr Phase-0 drift carried unchanged | <1e-9° |
+| pole / equator / periodicity | pole-star alt=latitude (any pole), equatorial star rises due E, sidereal periodicity | exact |
+| Keplerian bodies | Kepler residual, periapsis/apoapsis, circular uniformity, periodicity; Luna swings 154°/day | ≤1e-12 |
+| decoupling | §6 acceptance: cached Stage-2 == direct path; diurnal scrub = 0 Stage-1 recomputes | bit-exact |
+
+Stage-1 (relocate, ~10k stars) costs ~3.3 ms; Stage-2 (rotate cache → alt/az) ~0.6 ms
+(1660 fps). `npm run scrub-bench` shows the render loop pays only Stage-2 cost at any time
+scale — no render-loop stall.
 
 ## Known simplifications (documented, not silently absorbed)
 
