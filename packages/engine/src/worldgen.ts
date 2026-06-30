@@ -12,9 +12,8 @@ import type { World, KeplerElements } from "./world.js";
 // --- physical constants (SI unless noted) ---
 const G = 6.674e-11;
 const MSUN = 1.989e30, MEARTH = 5.972e24;
-const RSUN = 6.957e8, REARTH = 6.371e6;
+const RSUN = 6.957e8;
 const AU = 1.495978707e11, YEAR_S = 3.15576e7, DAY_S = 86400, HOUR_S = 3600;
-const GYR = 1e9 * YEAR_S;
 
 export type WorldType =
   | "habitable" | "tidally_locked" | "cold_distant"

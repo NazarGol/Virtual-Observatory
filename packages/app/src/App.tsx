@@ -14,6 +14,7 @@ import {
   SECONDS_PER_JULIAN_YEAR, type LoadedSky, type Vantage,
 } from "./sky";
 import { SkyView } from "./components/SkyView";
+import { Gallery } from "./components/Gallery";
 import { geodesicArc, type StarPoint } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
@@ -67,6 +68,7 @@ export function App() {
   const [tool, setTool] = useState<Tool>("select");
   const [pendingLabel, setPendingLabel] = useState<string | null>(null); // anchor id awaiting text
   const [fov, setFov] = useState(60);
+  const [view, setView] = useState<"instrument" | "gallery">("instrument");
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
   const [notebook, setNotebook] = useState<Notebook>(() => loadJSON(KEY.note, parseNotebook, emptyNotebook()));
@@ -176,6 +178,7 @@ export function App() {
   const onTool = (t: Tool) => { setTool(t); setSelection([]); setDraft([]); setPendingLabel(null); };
   const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
 
+  if (view === "gallery") return <Gallery onBack={() => setView("instrument")} />;
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
 
@@ -189,6 +192,7 @@ export function App() {
 
   return (
     <div className="app">
+      <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ World gallery</button>
       {speculative && (
         <div className="speculative">
           ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)}. Beyond the rectilinear model's validated range; these
