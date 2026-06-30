@@ -17,7 +17,7 @@ import { geodesicArc, type StarPoint } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
 const R2D = 180 / Math.PI;
-const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+const uid = () => crypto.randomUUID();
 const raOf = (d: Vec3) => ((Math.atan2(d[1], d[0]) * R2D) + 360) % 360;
 const decOf = (d: Vec3) => Math.asin(Math.max(-1, Math.min(1, d[2]))) * R2D;
 const fmtT = (y: number) => `${y.toLocaleString(undefined, { maximumFractionDigits: 0 })} yr`;
@@ -34,6 +34,25 @@ function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
   try { const s = localStorage.getItem(key); return s ? parse(s) : fallback; } catch { return fallback; }
 }
 
+/** Small in-app text editor used everywhere a native prompt used to be (prompts are
+ *  suppressed in embedded browsers like VS Code's Simple Browser). */
+function InlineForm(props: { placeholder: string; initial?: string; multiline?: boolean; onSubmit: (v: string) => void; onCancel: () => void }) {
+  const [v, setV] = useState(props.initial ?? "");
+  const submit = () => { const t = v.trim(); if (t) props.onSubmit(t); };
+  const common = {
+    autoFocus: true, value: v, placeholder: props.placeholder,
+    onChange: (e: { target: { value: string } }) => setV(e.target.value),
+  };
+  return (
+    <div className="inline-form">
+      {props.multiline
+        ? <textarea {...common} rows={2} onKeyDown={(e) => { if (e.key === "Escape") props.onCancel(); }} />
+        : <input {...common} onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") props.onCancel(); }} />}
+      <div className="btns"><button onClick={submit}>save</button><button onClick={props.onCancel}>cancel</button></div>
+    </div>
+  );
+}
+
 export function App() {
   const [sky, setSky] = useState<LoadedSky | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,8 +62,9 @@ export function App() {
   const [inertial, setInertial] = useState<InertialStar[]>([]);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
-  const [draft, setDraft] = useState<string[]>([]); // figure-in-progress node ids
+  const [draft, setDraft] = useState<string[]>([]);
   const [tool, setTool] = useState<Tool>("select");
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null); // anchor id awaiting text
   const [fov, setFov] = useState(60);
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
@@ -87,7 +107,6 @@ export function App() {
   const measureArcs = useMemo(() => {
     const arcs: Vec3[][] = [];
     for (const r of results) if (r.ok) for (let i = 0; i + 1 < r.endpoints.length; i++) arcs.push(geodesicArc(r.endpoints[i]!, r.endpoints[i + 1]!));
-    // live preview of the in-progress measurement / figure path
     const draftDirs = [...selection, ...draft].map((id) => dirById.get(id)).filter((d): d is Vec3 => !!d);
     for (let i = 0; i + 1 < draftDirs.length; i++) arcs.push(geodesicArc(draftDirs[i]!, draftDirs[i + 1]!));
     return arcs;
@@ -114,14 +133,9 @@ export function App() {
     const id = index == null ? null : inertial[index]?.id ?? null;
     if (id == null) { if (tool === "select") setSelection([]); return; }
     if (tool === "select") { setSelection([id]); return; }
-    if (tool === "label") {
-      const text = window.prompt("Label text:", metaById.get(id)?.name || id);
-      if (text) setAnnotations((a) => [...a, { id: uid(), kind: "label", text, anchorId: id, createdAtYears: tYears } as LabelDef]);
-      return;
-    }
+    if (tool === "label") { setPendingLabel(id); return; }
     if (tool === "figure") { setDraft((d) => [...d, id]); return; }
     if (tool === "alignment") { setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id])); return; }
-    // distance / sep+pa: two clicks -> a measurement
     setSelection((sel) => {
       const next = [...sel, id];
       if (next.length >= 2) {
@@ -130,39 +144,36 @@ export function App() {
       }
       return next;
     });
-  }, [tool, inertial, metaById, tYears]);
+  }, [tool, inertial, tYears]);
 
-  const finishFigure = useCallback(() => {
+  const finishFigure = (name: string) => {
     if (draft.length < 2) return;
-    const name = window.prompt("Figure / constellation name:", "New figure");
-    if (name == null) return;
     const edges: [number, number][] = draft.slice(0, -1).map((_, i) => [i, i + 1]);
     setAnnotations((a) => [...a, { id: uid(), kind: "figure", name, nodeIds: [...draft], edges, constellation: true, createdAtYears: tYears } as FigureDef]);
     setDraft([]);
-  }, [draft, tYears]);
-
-  const makeGroup = useCallback(() => {
+  };
+  const makeGroup = (name: string) => {
     if (selection.length < 2) return;
-    const name = window.prompt("Group name:", "New group");
-    if (name == null) return;
     setAnnotations((a) => [...a, { id: uid(), kind: "group", name, objectIds: [...selection], createdAtYears: tYears } as GroupDef]);
     setSelection([]);
-  }, [selection, tYears]);
-
-  const onTool = (t: Tool) => { setTool(t); setSelection([]); setDraft([]); };
-  const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
-
-  const addNote = () => {
-    const text = window.prompt("Observation / note:");
-    if (!text) return;
-    const note: Note = { id: uid(), text, objectIds: [...selection], atYears: tYears, createdAtYears: tYears };
-    setNotebook((nb) => ({ ...nb, notes: [...nb.notes, note] }));
   };
-  const addMarker = () => {
-    const label = window.prompt("Timeline marker label:", fmtT(tYears));
-    if (label == null) return;
+  const submitLabel = (text: string) => {
+    if (!pendingLabel) return;
+    setAnnotations((a) => [...a, { id: uid(), kind: "label", text, anchorId: pendingLabel, createdAtYears: tYears } as LabelDef]);
+    setPendingLabel(null);
+  };
+  const finishAlignment = () => {
+    if (selection.length < 3) return;
+    setMeasurements((m) => [...m, { id: uid(), kind: "alignment", objectIds: [...selection], createdAtYears: tYears }]);
+    setSelection([]);
+  };
+  const addNote = (text: string) =>
+    setNotebook((nb) => ({ ...nb, notes: [...nb.notes, { id: uid(), text, objectIds: [...selection], atYears: tYears, createdAtYears: tYears } as Note] }));
+  const addMarker = (label: string) =>
     setNotebook((nb) => ({ ...nb, markers: [...nb.markers, { id: uid(), label, atYears: tYears }] }));
-  };
+
+  const onTool = (t: Tool) => { setTool(t); setSelection([]); setDraft([]); setPendingLabel(null); };
+  const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
 
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
@@ -170,6 +181,7 @@ export function App() {
   const focusId = hoverId ?? selection[0] ?? draft[draft.length - 1] ?? null;
   const focusDir = focusId ? dirById.get(focusId) : undefined;
   const focusMeta = focusId ? metaById.get(focusId) : undefined;
+  const pendingLabelName = pendingLabel ? metaById.get(pendingLabel)?.name || pendingLabel : null;
 
   return (
     <div className="app">
@@ -183,8 +195,8 @@ export function App() {
       <aside className="side">
         <Toolbar tool={tool} onTool={onTool} vantage={vantage} setVantage={setVantage}
           fov={fov} nudgeFov={nudgeFov} selection={selection} draft={draft}
-          onFinishFigure={finishFigure} onMakeGroup={makeGroup}
-          onFinishAlignment={() => { if (selection.length >= 3) { setMeasurements((m) => [...m, { id: uid(), kind: "alignment", objectIds: [...selection], createdAtYears: tYears }]); setSelection([]); } }} />
+          onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
+          pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
         <Readout sky={sky} t={tYears} dir={focusDir} meta={focusMeta} />
         <Measurements results={results} metaById={metaById}
           onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
@@ -205,8 +217,10 @@ export function App() {
 function Toolbar(props: {
   tool: Tool; onTool: (t: Tool) => void; vantage: Vantage; setVantage: (v: Vantage) => void;
   fov: number; nudgeFov: (f: number) => void; selection: string[]; draft: string[];
-  onFinishFigure: () => void; onMakeGroup: () => void; onFinishAlignment: () => void;
+  onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
+  pendingLabelName: string | null; onSubmitLabel: (t: string) => void; onCancelLabel: () => void;
 }) {
+  const [naming, setNaming] = useState<null | "figure" | "group">(null);
   return (
     <div className="panel">
       <h2>Instrument</h2>
@@ -225,8 +239,18 @@ function Toolbar(props: {
           <button key={t} className={props.tool === t ? "active" : ""} onClick={() => props.onTool(t)}>{TOOL_LABEL[t]}</button>)}
       </div>
       {props.tool === "alignment" && <div style={{ marginTop: 6 }}><button disabled={props.selection.length < 3} onClick={props.onFinishAlignment}>finish alignment ({props.selection.length})</button></div>}
-      {props.tool === "figure" && <div style={{ marginTop: 6 }}><button disabled={props.draft.length < 2} onClick={props.onFinishFigure}>finish figure ({props.draft.length} stars)</button></div>}
-      {props.tool === "select" && props.selection.length >= 2 && <div style={{ marginTop: 6 }}><button onClick={props.onMakeGroup}>group {props.selection.length} stars</button></div>}
+      {props.tool === "figure" && (naming === "figure"
+        ? <InlineForm placeholder="figure / constellation name" onSubmit={(n) => { props.onFinishFigure(n); setNaming(null); }} onCancel={() => setNaming(null)} />
+        : <div style={{ marginTop: 6 }}><button disabled={props.draft.length < 2} onClick={() => setNaming("figure")}>finish figure ({props.draft.length} stars)</button></div>)}
+      {props.tool === "select" && props.selection.length >= 2 && (naming === "group"
+        ? <InlineForm placeholder="group name" onSubmit={(n) => { props.onMakeGroup(n); setNaming(null); }} onCancel={() => setNaming(null)} />
+        : <div style={{ marginTop: 6 }}><button onClick={() => setNaming("group")}>group {props.selection.length} stars</button></div>)}
+      {props.pendingLabelName && (
+        <div style={{ marginTop: 6 }}>
+          <div className="muted">label “{props.pendingLabelName}”</div>
+          <InlineForm placeholder="label text" initial={props.pendingLabelName} onSubmit={props.onSubmitLabel} onCancel={props.onCancelLabel} />
+        </div>
+      )}
     </div>
   );
 }
@@ -279,6 +303,7 @@ function measureValue(r: MeasurementResult): string {
 
 function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure[]; onRename: (id: string, name: string) => void; onDelete: (id: string) => void }) {
   const figState = new Map(props.figures.map((f) => [f.id, f]));
+  const [editing, setEditing] = useState<string | null>(null);
   if (props.annotations.length === 0) return <div className="panel"><h2>Annotations</h2><div className="muted">draw figures, pin labels, group stars</div></div>;
   return (
     <div className="panel">
@@ -291,14 +316,18 @@ function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure
             : a.kind === "group" ? `group · ${a.objectIds.length} stars` : `label · ${a.anchorId}`;
           return (
             <div key={a.id} className={"mitem" + (broken ? " broken" : "")}>
-              <div className="top">
-                <span className="val" style={{ fontSize: 13 }}>{title}</span>
-                <span>
-                  {a.kind !== "label" && <button className="x" title="rename" onClick={() => { const n = window.prompt("Rename:", a.name); if (n != null) props.onRename(a.id, n); }}>✎</button>}
-                  <button className="x" onClick={() => props.onDelete(a.id)}>✕</button>
-                </span>
-              </div>
-              <div className="ids">{sub}{broken && " (some stars missing)"}</div>
+              {editing === a.id && a.kind !== "label"
+                ? <InlineForm placeholder="name" initial={a.name} onSubmit={(n) => { props.onRename(a.id, n); setEditing(null); }} onCancel={() => setEditing(null)} />
+                : <>
+                  <div className="top">
+                    <span className="val" style={{ fontSize: 13 }}>{title}</span>
+                    <span>
+                      {a.kind !== "label" && <button className="x" title="rename" onClick={() => setEditing(a.id)}>✎</button>}
+                      <button className="x" onClick={() => props.onDelete(a.id)}>✕</button>
+                    </span>
+                  </div>
+                  <div className="ids">{sub}{broken && " (some stars missing)"}</div>
+                </>}
             </div>
           );
         })}
@@ -309,14 +338,17 @@ function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure
 
 function NotebookPanel(props: {
   notebook: Notebook; metaById: Map<string, InertialStar>;
-  onAddNote: () => void; onAddMarker: () => void;
+  onAddNote: (t: string) => void; onAddMarker: (l: string) => void;
   onJump: (t: number, ids?: string[]) => void; onDeleteNote: (id: string) => void; onDeleteMarker: (id: string) => void;
 }) {
   const name = (id: string) => props.metaById.get(id)?.name || id;
+  const [adding, setAdding] = useState<null | "note" | "marker">(null);
   return (
     <div className="panel">
       <h2>Notebook</h2>
-      <div className="btns"><button onClick={props.onAddNote}>+ note</button><button onClick={props.onAddMarker}>+ time marker</button></div>
+      <div className="btns"><button onClick={() => setAdding("note")}>+ note</button><button onClick={() => setAdding("marker")}>+ time marker</button></div>
+      {adding === "note" && <InlineForm placeholder="observation / note" multiline onSubmit={(t) => { props.onAddNote(t); setAdding(null); }} onCancel={() => setAdding(null)} />}
+      {adding === "marker" && <InlineForm placeholder="marker label" onSubmit={(l) => { props.onAddMarker(l); setAdding(null); }} onCancel={() => setAdding(null)} />}
       {props.notebook.markers.length > 0 && <div className="muted" style={{ marginTop: 8 }}>timeline</div>}
       <div className="mlist">
         {props.notebook.markers.map((m) => (
@@ -331,7 +363,7 @@ function NotebookPanel(props: {
         {props.notebook.notes.map((n) => (
           <div key={n.id} className="mitem">
             <div className="top">
-              <button className="link" onClick={() => props.onJump(n.atYears ?? 0, n.objectIds)}>{n.text.slice(0, 60)}</button>
+              <button className="link" onClick={() => props.onJump(n.atYears ?? 0, n.objectIds)}>{n.text.slice(0, 80)}</button>
               <button className="x" onClick={() => props.onDeleteNote(n.id)}>✕</button>
             </div>
             <div className="ids">{n.atYears != null ? fmtT(n.atYears) : "no time"}{n.objectIds.length > 0 && ` · ${n.objectIds.map(name).join(", ")}`}</div>
