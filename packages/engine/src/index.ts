@@ -16,4 +16,5 @@ export * from "./annotate.js";
 export * from "./notebook.js";
 export * from "./propagation.js";
 export * from "./galactic.js";
+export * from "./worldgen.js";
 export { GALACTIC_TO_ICRS } from "./galactic_icrs_matrix.js";
