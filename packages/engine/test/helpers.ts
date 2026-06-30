@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Catalog } from "../src/catalog.js";
+import { parseWorld, type World } from "../src/world.js";
 
 const here = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url));
 
@@ -12,6 +13,12 @@ export function loadCatalog(): Catalog {
   return JSON.parse(
     readFileSync(here("../../../catalog/test_stars.json"), "utf8"),
   ) as Catalog;
+}
+
+export function loadSolWorld(): World {
+  return parseWorld(
+    JSON.parse(readFileSync(here("../../../worlds/sol.world.json"), "utf8")),
+  );
 }
 
 /** Great-circle separation between two (ra, dec) pairs in degrees, returned in arcsec. */

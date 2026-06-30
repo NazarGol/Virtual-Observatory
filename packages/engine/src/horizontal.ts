@@ -77,12 +77,59 @@ export function siderealAngleRad(o: PlanetOrientation, tYears: number): number {
 }
 
 /**
- * Rotate an inertial (ICRS) unit direction into the observer's local horizontal frame.
- *
- * @param dirIcrs unit direction in the inertial frame (from Stage 1)
- * @param o       planet spin-axis + rotation period
- * @param obs     observer latitude/longitude
- * @param tYears  Julian years since J2000.0
+ * A reusable projector that turns inertial directions into the local horizontal frame for a
+ * FIXED orientation/observer/time. The planet's equatorial basis, the sidereal angle, and
+ * the observer Up/North/East basis depend only on (orientation, observer, t) -- not on the
+ * star -- so they are computed once here. Projecting N stars is then N cheap dot products,
+ * which is what keeps Stage 2 far below Stage-1 cost (spec section 1.4).
+ */
+export interface HorizontalProjector {
+  project(dirIcrs: Vec3): HorizontalCoord;
+}
+
+export function makeHorizontalProjector(
+  o: PlanetOrientation,
+  obs: GeoObserver,
+  tYears: number,
+): HorizontalProjector {
+  const { x: ex, y: ey, z: ez } = planetEquatorialBasis(o);
+
+  // Local sidereal angle on the observer's meridian: spin phase + east longitude. Rotating
+  // the equatorial vector by -(theta+lon) about the pole gives the hour-angle frame.
+  const ang = siderealAngleRad(o, tYears) + obs.lonDeg * D2R;
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+
+  const phi = obs.latDeg * D2R;
+  const cphi = Math.cos(phi);
+  const sphi = Math.sin(phi);
+
+  return {
+    project(dirIcrs: Vec3): HorizontalCoord {
+      // Direction in the planet's inertial-equatorial frame (pole = z).
+      const eqx = dot(dirIcrs, ex);
+      const eqy = dot(dirIcrs, ey);
+      const eqz = dot(dirIcrs, ez);
+      // dB = Rz(-ang) * dEq.
+      const bx = c * eqx + s * eqy;
+      const by = -s * eqx + c * eqy;
+      const bz = eqz;
+      // Project onto Up=[cphi,0,sphi], North=[-sphi,0,cphi], East=[0,1,0].
+      const u = bx * cphi + bz * sphi;
+      const n = -bx * sphi + bz * cphi;
+      const e = by;
+      const altDeg = Math.asin(Math.max(-1, Math.min(1, u))) * R2D;
+      let azDeg = Math.atan2(e, n) * R2D;
+      if (azDeg < 0) azDeg += 360;
+      return { altDeg, azDeg };
+    },
+  };
+}
+
+/**
+ * Rotate a single inertial (ICRS) unit direction into the observer's local horizontal
+ * frame. Convenience wrapper around {@link makeHorizontalProjector}; for many stars at one
+ * time, build the projector once and reuse it.
  */
 export function inertialToHorizontal(
   dirIcrs: Vec3,
@@ -90,34 +137,5 @@ export function inertialToHorizontal(
   obs: GeoObserver,
   tYears: number,
 ): HorizontalCoord {
-  const { x: ex, y: ey, z: ez } = planetEquatorialBasis(o);
-
-  // Direction in the planet's inertial-equatorial frame (pole = z).
-  const dEq: Vec3 = [dot(dirIcrs, ex), dot(dirIcrs, ey), dot(dirIcrs, ez)];
-
-  // Local sidereal angle on the observer's meridian: spin phase + east longitude.
-  // Rotating dEq by -(theta+lon) about the pole puts the observer's meridian at RA=0,
-  // i.e. the hour-angle frame.
-  const ang = siderealAngleRad(o, tYears) + obs.lonDeg * D2R;
-  const c = Math.cos(ang);
-  const s = Math.sin(ang);
-  const dB: Vec3 = [c * dEq[0] + s * dEq[1], -s * dEq[0] + c * dEq[1], dEq[2]];
-
-  // Observer at latitude phi on the prime meridian (lon already folded in): local
-  // Up/North/East basis in this rotated frame.
-  const phi = obs.latDeg * D2R;
-  const cphi = Math.cos(phi);
-  const sphi = Math.sin(phi);
-  const up: Vec3 = [cphi, 0, sphi];
-  const north: Vec3 = [-sphi, 0, cphi];
-  const east: Vec3 = [0, 1, 0];
-
-  const u = dot(dB, up);
-  const n = dot(dB, north);
-  const e = dot(dB, east);
-
-  const altDeg = Math.asin(Math.max(-1, Math.min(1, u))) * R2D;
-  let azDeg = Math.atan2(e, n) * R2D;
-  if (azDeg < 0) azDeg += 360;
-  return { altDeg, azDeg };
+  return makeHorizontalProjector(o, obs, tYears).project(dirIcrs);
 }
