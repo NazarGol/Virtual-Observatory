@@ -3,6 +3,7 @@ import {
   resolveMeasurement, serializeMeasurements, parseMeasurements,
   serializeAnnotations, parseAnnotations, resolveFigure, resolveLabel,
   serializeNotebook, parseNotebook, emptyNotebook,
+  PROPAGATION_MODELS,
   type MeasurementDef, type MeasurementKind, type MeasurementResult,
   type Annotation, type FigureDef, type LabelDef, type GroupDef, type ResolvedFigure,
   type Notebook, type Note,
@@ -183,8 +184,17 @@ export function App() {
   const focusMeta = focusId ? metaById.get(focusId) : undefined;
   const pendingLabelName = pendingLabel ? metaById.get(pendingLabel)?.name || pendingLabel : null;
 
+  const cap = PROPAGATION_MODELS.rectilinear.honestCapYears;
+  const speculative = Math.abs(tYears) > cap;
+
   return (
     <div className="app">
+      {speculative && (
+        <div className="speculative">
+          ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)}. Beyond the rectilinear model's validated range; these
+          positions are extrapolation, not data. (Galactic-orbit propagation extends this to ~1 Myr.)
+        </div>
+      )}
       <SkyView
         stars={starPoints} selectionDirs={selectionDirs} overlays={measureArcs}
         figures={figureArcs} labels={labelSprites}
@@ -209,7 +219,7 @@ export function App() {
           onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
       </aside>
 
-      <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} />
+      <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} speculative={speculative} />
     </div>
   );
 }
@@ -374,14 +384,15 @@ function NotebookPanel(props: {
   );
 }
 
-function TimeBar(props: { t: number; scale: number; setScale: (s: number) => void; setT: (t: number) => void; starCount: number }) {
+function TimeBar(props: { t: number; scale: number; setScale: (s: number) => void; setT: (t: number) => void; starCount: number; speculative: boolean }) {
   return (
     <div className="timebar">
-      <span className="clock">t = {fmtT(props.t)}</span>
+      <span className={"clock" + (props.speculative ? " spec" : "")}>t = {fmtT(props.t)}{props.speculative && " ⚠"}</span>
       <input type="range" min={-1000} max={1000} step={1} value={(props.t / props.scale) * 1000}
         onChange={(e) => props.setT((Number(e.target.value) / 1000) * props.scale)} />
       <select value={props.scale} onChange={(e) => props.setScale(Number(e.target.value))}>
         <option value={100}>±100 yr</option><option value={10000}>±10 kyr</option><option value={100000}>±100 kyr</option>
+        <option value={1000000}>±1 Myr</option><option value={10000000}>±10 Myr</option>
       </select>
       <button onClick={() => props.setT(0)}>now</button>
       <span className="muted">{props.starCount} stars</span>
