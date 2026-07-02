@@ -35,7 +35,7 @@ jobs:
       # --- Pure-TS engine: typecheck, validation suite (sections 3.1-3.4), no-three guard. ---
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install node deps
         run: npm ci
       - name: Typecheck engine
