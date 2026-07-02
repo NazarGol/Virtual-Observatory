@@ -10,7 +10,7 @@ import {
   type InertialStar, type Vec3, type ObjectResolver,
 } from "@vobs/engine";
 import {
-  loadSky, buildSession, directionAt, horizontalOf, riseSetOf,
+  loadSky, buildSession, buildSessionAt, directionAt, horizontalOf, riseSetOf,
   SECONDS_PER_JULIAN_YEAR, type LoadedSky, type Vantage,
 } from "./sky";
 import { SkyView } from "./components/SkyView";
@@ -60,6 +60,7 @@ export function App() {
   const [sky, setSky] = useState<LoadedSky | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
+  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string } | null>(null);
   const [tYears, setTYears] = useState(0);
   const [scale, setScale] = useState(100000);
   const [inertial, setInertial] = useState<InertialStar[]>([]);
@@ -80,7 +81,10 @@ export function App() {
 
   useEffect(() => { loadSky().then(setSky).catch((e) => setError(String(e))); }, []);
 
-  const sessionInfo = useMemo(() => (sky ? buildSession(sky, vantage) : null), [sky, vantage]);
+  const sessionInfo = useMemo(
+    () => (!sky ? null : worldVantage ? buildSessionAt(sky, worldVantage.pos) : buildSession(sky, vantage)),
+    [sky, vantage, worldVantage],
+  );
   const mw = useMemo(() => milkyWayGeometry(sessionInfo ? sessionInfo.observer.origin_pc : [0, 0, 0]), [sessionInfo]);
   useEffect(() => {
     if (!sessionInfo) return;
@@ -183,7 +187,8 @@ export function App() {
   const onTool = (t: Tool) => { setTool(t); setSelection([]); setDraft([]); setPendingLabel(null); };
   const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
 
-  if (view === "gallery") return <Gallery onBack={() => setView("instrument")} />;
+  if (view === "gallery") return <Gallery onBack={() => setView("instrument")}
+    onObserve={(pos, label) => { setWorldVantage({ pos, label }); setView("instrument"); }} />;
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
 
@@ -214,7 +219,9 @@ export function App() {
       />
 
       <aside className="side">
-        <Toolbar tool={tool} onTool={onTool} vantage={vantage} setVantage={setVantage}
+        <Toolbar tool={tool} onTool={onTool} vantage={vantage}
+          setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
+          worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
           fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
           showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
           selection={selection} draft={draft}
@@ -239,6 +246,7 @@ export function App() {
 
 function Toolbar(props: {
   tool: Tool; onTool: (t: Tool) => void; vantage: Vantage; setVantage: (v: Vantage) => void;
+  worldVantageLabel: string | null; onClearWorldVantage: () => void;
   fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
   showMilkyWay: boolean; onMilkyWay: () => void;
   selection: string[]; draft: string[];
@@ -251,10 +259,15 @@ function Toolbar(props: {
       <h2>Instrument</h2>
       <div className="row"><span className="k">vantage</span>
         <span className="btns">
-          <button className={props.vantage === "alpha-cen" ? "active" : ""} onClick={() => props.setVantage("alpha-cen")}>Alpha Cen</button>
-          <button className={props.vantage === "sol" ? "active" : ""} onClick={() => props.setVantage("sol")}>Sol</button>
+          <button className={!props.worldVantageLabel && props.vantage === "alpha-cen" ? "active" : ""} onClick={() => props.setVantage("alpha-cen")}>Alpha Cen</button>
+          <button className={!props.worldVantageLabel && props.vantage === "sol" ? "active" : ""} onClick={() => props.setVantage("sol")}>Sol</button>
         </span>
       </div>
+      {props.worldVantageLabel && (
+        <div className="row" style={{ marginTop: 4 }}><span className="k">observing ✦</span>
+          <span className="v">{props.worldVantageLabel} <button className="x" onClick={props.onClearWorldVantage} title="back to Sol/Alpha Cen">×</button></span>
+        </div>
+      )}
       <div className="row" style={{ marginTop: 6 }}><span className="k">FOV {props.fov.toFixed(1)}°</span>
         <span className="btns"><button onClick={() => props.nudgeFov(1 / 1.4)}>zoom +</button><button onClick={() => props.nudgeFov(1.4)}>zoom −</button></span>
       </div>

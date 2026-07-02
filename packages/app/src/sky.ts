@@ -53,18 +53,19 @@ export function observerFor(sky: LoadedSky, vantage: Vantage): Observer {
   return { origin_pc: [0, 0, 0], vel_kms: [0, 0, 0] };
 }
 
-/** A SkySession built for a chosen vantage (the world's host star relocated there). */
-export function buildSession(sky: LoadedSky, vantage: Vantage): { session: SkySession; observer: Observer } {
-  const observer = observerFor(sky, vantage);
+/** A SkySession observing from an arbitrary galactic position (pc). */
+export function buildSessionAt(sky: LoadedSky, origin_pc: Vec3, vel_kms: Vec3 = [0, 0, 0]): { session: SkySession; observer: Observer } {
   const world: World = {
     ...sky.world,
-    host_star: {
-      ...sky.world.host_star,
-      galactic_xyz_pc: observer.origin_pc,
-      space_velocity_kms: observer.vel_kms ?? [0, 0, 0],
-    },
+    host_star: { ...sky.world.host_star, galactic_xyz_pc: origin_pc, space_velocity_kms: vel_kms },
   };
-  return { session: new SkySession(sky.catalog, world), observer };
+  return { session: new SkySession(sky.catalog, world), observer: { origin_pc, vel_kms } };
+}
+
+/** A SkySession built for a named vantage (Sol / Alpha Cen). */
+export function buildSession(sky: LoadedSky, vantage: Vantage): { session: SkySession; observer: Observer } {
+  const observer = observerFor(sky, vantage);
+  return buildSessionAt(sky, observer.origin_pc, observer.vel_kms ?? [0, 0, 0]);
 }
 
 /** Inertial direction of any catalog object at time t (for the measurement resolver + events). */
