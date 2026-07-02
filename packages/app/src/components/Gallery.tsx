@@ -1,99 +1,129 @@
-// Gallery: a stratified grid of generated worlds, one card per slot. Each card shows the
-// world, a system schematic, and -- the point of the whole exercise -- the per-type physics
-// CHECKLIST from validateWorld (every item green, because only valid worlds ship). Slots can
-// be pinned (kept) or rerolled (resampled within their type until valid).
-import { useMemo, useState } from "react";
-import {
-  generateWorld, validateWorld, WORLD_TYPES, mulberry32,
-  type GeneratedWorld, type WorldType,
-} from "@vobs/engine";
+// Gallery (Phase 4-FIX): LOADS pre-emitted worlds, it does not build them. Each world.json is
+// anchored to a REAL catalog host (see tools/emit_worlds), carries per-parameter provenance,
+// and an embedded validation checklist. Pin/reroll operate over the loaded pool. No physics
+// and no world construction runs here -- the app only reads.
+import { useEffect, useState } from "react";
 
-const TYPE_COLOR: Record<WorldType, string> = {
+interface Check { name: string; ok: boolean; detail: string }
+interface Prov { value?: number | string; note: string; real?: boolean }
+interface LoadedWorld {
+  world_type: string; name: string; seed?: number; age_gyr: number;
+  host_star: { catalog_id: string; galactic_xyz_pc: [number, number, number]; luminosity_lsun: number; mass_msun: number; teff_k: number; radius_rsun: number };
+  planet: { radius_km: number; mass_mearth: number; rotation_period_s: number; axial_tilt_deg: number; orbit: { a_au: number; e: number } };
+  moons: { name: string; radius_km: number }[];
+  provenance?: Record<string, Prov>;
+  validation?: { checks: Check[] };
+}
+interface Manifest { catalog: string; host_count: number; worlds: { type: string; file: string; host_id: string; name: string }[] }
+
+const TYPE_COLOR: Record<string, string> = {
   habitable: "#5fd08a", tidally_locked: "#ff9a5c", cold_distant: "#6fb6ff",
   high_obliquity: "#c98cff", multi_moon: "#ffd86b", eccentric: "#ff6f91",
 };
 const DAY = 86400, YEAR = 3.15576e7;
 
-interface Slot { world: GeneratedWorld; pinned: boolean; seed: number }
-
-function makeSlot(type: WorldType, seed: number, idx: number): Slot {
-  return { world: generateWorld(type, mulberry32(seed), idx), pinned: false, seed };
-}
-
 export function Gallery(props: { onBack: () => void }) {
-  const [slots, setSlots] = useState<Slot[]>(() =>
-    WORLD_TYPES.concat(WORLD_TYPES.slice(0, 2)).map((t, i) => makeSlot(t, 1000 + i, i + 1)));
-  const [seedCounter, setSeedCounter] = useState(5000);
+  const [byType, setByType] = useState<Map<string, LoadedWorld[]> | null>(null);
+  const [order, setOrder] = useState<string[]>([]);
+  const [slots, setSlots] = useState<{ type: string; index: number; pinned: boolean }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
 
-  const reroll = (i: number) => {
-    setSlots((s) => s.map((slot, j) =>
-      j !== i || slot.pinned ? slot : makeSlot(slot.world.world_type, seedCounter + i, i + 1)));
-    setSeedCounter((c) => c + 101);
-  };
-  const rerollAll = () => {
-    let c = seedCounter;
-    setSlots((s) => s.map((slot, i) => (slot.pinned ? slot : makeSlot(slot.world.world_type, (c += 101), i + 1))));
-    setSeedCounter(c + 1);
-  };
+  useEffect(() => {
+    (async () => {
+      const man = (await (await fetch("data/worlds/manifest.json")).json()) as Manifest;
+      const files = await Promise.all(man.worlds.map(async (w) => ({
+        w, world: (await (await fetch(`data/worlds/${w.file}`)).json()) as LoadedWorld,
+      })));
+      const m = new Map<string, LoadedWorld[]>();
+      for (const { world } of files) {
+        const arr = m.get(world.world_type) ?? [];
+        arr.push(world);
+        m.set(world.world_type, arr);
+      }
+      const types = [...m.keys()];
+      setByType(m); setOrder(types);
+      setSlots(types.map((type) => ({ type, index: 0, pinned: false })));
+    })().catch((e) => setErr(String(e)));
+  }, []);
+
+  const reroll = (i: number) => setSlots((s) => s.map((slot, j) =>
+    j !== i || slot.pinned ? slot : { ...slot, index: (slot.index + 1) % (byType!.get(slot.type)!.length || 1) }));
+  const rerollAll = () => setSlots((s) => s.map((slot) =>
+    slot.pinned ? slot : { ...slot, index: (slot.index + 1) % (byType!.get(slot.type)!.length || 1) }));
   const togglePin = (i: number) => setSlots((s) => s.map((slot, j) => (j === i ? { ...slot, pinned: !slot.pinned } : slot)));
+
+  if (err) return <div className="gallery"><header className="gbar"><button onClick={props.onBack}>← Instrument</button></header><div style={{ padding: 24, color: "#ff9" }}>No world pool. Run <code>npm run emit-worlds</code>, then restart. ({err})</div></div>;
+  if (!byType) return <div className="gallery"><header className="gbar"><button onClick={props.onBack}>← Instrument</button><b>World gallery</b></header><div style={{ padding: 24 }}>loading worlds…</div></div>;
 
   return (
     <div className="gallery">
       <header className="gbar">
         <button onClick={props.onBack}>← Instrument</button>
         <b>World gallery</b>
-        <span className="muted">stratified across {WORLD_TYPES.length} types · every world passes its type's physics</span>
+        <span className="muted">{order.length} types · every world anchored to a real catalog host · loaded, not generated</span>
         <span style={{ flex: 1 }} />
         <button onClick={rerollAll}>reroll all (keep pinned)</button>
       </header>
       <div className="grid">
-        {slots.map((slot, i) => (
-          <WorldCard key={i} world={slot.world} pinned={slot.pinned}
-            onPin={() => togglePin(i)} onReroll={() => reroll(i)} />
-        ))}
+        {slots.map((slot, i) => {
+          const pool = byType.get(slot.type)!;
+          return <WorldCard key={slot.type} world={pool[slot.index % pool.length]!} poolSize={pool.length}
+            pinned={slot.pinned} onPin={() => togglePin(i)} onReroll={() => reroll(i)} />;
+        })}
       </div>
     </div>
   );
 }
 
-function WorldCard(props: { world: GeneratedWorld; pinned: boolean; onPin: () => void; onReroll: () => void }) {
+function WorldCard(props: { world: LoadedWorld; poolSize: number; pinned: boolean; onPin: () => void; onReroll: () => void }) {
   const w = props.world;
-  const checks = useMemo(() => validateWorld(w).checks, [w]);
+  const [showProv, setShowProv] = useState(false);
+  const checks = w.validation?.checks ?? [];
   const Porb_d = Math.sqrt(w.planet.orbit.a_au ** 3 / w.host_star.mass_msun) * YEAR / DAY;
   const locked = w.world_type === "tidally_locked";
   return (
     <div className={"card" + (props.pinned ? " pinned" : "")}>
       <div className="chead">
-        <span className="badge" style={{ background: TYPE_COLOR[w.world_type] }}>{w.world_type.replace(/_/g, " ")}</span>
+        <span className="badge" style={{ background: TYPE_COLOR[w.world_type] ?? "#889" }}>{w.world_type.replace(/_/g, " ")}</span>
         <span className="cbtns">
           <button className={props.pinned ? "active" : ""} onClick={props.onPin} title="pin">📌</button>
-          <button onClick={props.onReroll} disabled={props.pinned} title="reroll">🎲</button>
+          <button onClick={props.onReroll} disabled={props.pinned} title={`reroll (1 of ${props.poolSize})`}>🎲</button>
         </span>
       </div>
       <SystemDiagram w={w} />
       <div className="cstats">
-        <Row k="host" v={`${w.host_star.mass_msun.toFixed(2)} M☉ · ${Math.round(w.host_star.teff_k)} K · ${w.host_star.luminosity_lsun.toFixed(2)} L☉`} />
+        <Row k="host ✦" v={`${w.host_star.catalog_id}`} title="real catalog star (the observer's vantage)" />
+        <Row k="star" v={`${w.host_star.mass_msun.toFixed(2)} M☉ · ${Math.round(w.host_star.teff_k)} K · ${w.host_star.luminosity_lsun.toFixed(2)} L☉`} />
         <Row k="orbit" v={`a ${w.planet.orbit.a_au.toFixed(3)} AU · e ${w.planet.orbit.e.toFixed(2)} · P ${fmtP(Porb_d)}`} />
         <Row k="spin/tilt" v={`${locked ? "locked (P=orbit)" : fmtP(w.planet.rotation_period_s / DAY)} · tilt ${w.planet.axial_tilt_deg.toFixed(0)}°`} />
         <Row k="moons / age" v={`${w.moons.length} · ${w.age_gyr.toFixed(1)} Gyr`} />
       </div>
       <div className="checks">
-        {checks.map((c, j) => (
-          <div key={j} className="check" title={c.detail}><span className="tick">✓</span> {c.name}</div>
-        ))}
+        {checks.map((c, j) => <div key={j} className="check" title={c.detail}><span className="tick">✓</span> {c.name}</div>)}
       </div>
+      {w.provenance && (
+        <div className="prov">
+          <button className="link" onClick={() => setShowProv((v) => !v)}>{showProv ? "▾" : "▸"} provenance (real vs generated)</button>
+          {showProv && (
+            <div className="provlist">
+              {Object.entries(w.provenance).map(([k, p]) => (
+                <div key={k} className="provrow"><span className={p.real ? "preal" : "pgen"}>{p.real ? "real" : "gen"}</span> <b>{k}</b>: {p.note}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
-function Row(props: { k: string; v: string }) {
-  return <div className="row"><span className="k">{props.k}</span><span className="v" style={{ textAlign: "right" }}>{props.v}</span></div>;
+function Row(props: { k: string; v: string; title?: string }) {
+  return <div className="row" title={props.title}><span className="k">{props.k}</span><span className="v" style={{ textAlign: "right" }}>{props.v}</span></div>;
 }
 function fmtP(days: number) {
   if (days < 1) return `${(days * 24).toFixed(1)} h`;
   if (days < 365) return `${days.toFixed(1)} d`;
   return `${(days / 365.25).toFixed(2)} yr`;
 }
-
 function teffColor(teff: number) {
   if (teff > 7000) return "#cfe0ff";
   if (teff > 5500) return "#fff6e6";
@@ -101,37 +131,27 @@ function teffColor(teff: number) {
   return "#ff9d6b";
 }
 
-/** Top-down system schematic: orbit ellipse with the star at a focus, planet at periastron,
- *  moons ringing it, an obliquity tick, and a faint habitable-zone band. */
-function SystemDiagram({ w }: { w: GeneratedWorld }) {
+function SystemDiagram({ w }: { w: LoadedWorld }) {
   const W = 260, H = 150, cy = H / 2, starX = W * 0.42;
   const a = w.planet.orbit.a_au, e = w.planet.orbit.e;
-  const apo = a * (1 + e);
-  const scale = (W * 0.5) / Math.max(apo, 1e-6);
+  const scale = (W * 0.5) / Math.max(a * (1 + e), 1e-6);
   const b = a * Math.sqrt(1 - e * e);
   const cxEll = starX + a * e * scale;
   const periX = starX - a * (1 - e) * scale;
   const hz = { inner: Math.sqrt(w.host_star.luminosity_lsun / 1.1), outer: Math.sqrt(w.host_star.luminosity_lsun / 0.53) };
   const tilt = w.planet.axial_tilt_deg * (Math.PI / 180);
-
   return (
     <svg className="diagram" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
-      {/* habitable zone band (drawn only if it fits) */}
-      {hz.outer * scale < W && (
-        <>
-          <circle cx={starX} cy={cy} r={hz.outer * scale} fill="none" stroke="#1f4a32" strokeDasharray="2 3" />
-          <circle cx={starX} cy={cy} r={hz.inner * scale} fill="none" stroke="#1f4a32" strokeDasharray="2 3" />
-        </>
-      )}
-      {/* orbit */}
+      {hz.outer * scale < W && <>
+        <circle cx={starX} cy={cy} r={hz.outer * scale} fill="none" stroke="#1f4a32" strokeDasharray="2 3" />
+        <circle cx={starX} cy={cy} r={hz.inner * scale} fill="none" stroke="#1f4a32" strokeDasharray="2 3" />
+      </>}
       <ellipse cx={cxEll} cy={cy} rx={a * scale} ry={b * scale} fill="none" stroke="#3a5a86" strokeWidth={1} />
-      {/* star at focus */}
       <circle cx={starX} cy={cy} r={Math.max(3, Math.min(9, w.host_star.radius_rsun * 5))} fill={teffColor(w.host_star.teff_k)} />
-      {/* planet at periastron, with obliquity tick + moons */}
       <g transform={`translate(${periX}, ${cy})`}>
         <line x1={-9 * Math.sin(tilt)} y1={9 * Math.cos(tilt)} x2={9 * Math.sin(tilt)} y2={-9 * Math.cos(tilt)} stroke="#8aa" strokeWidth={1} />
         <circle r={4} fill="#cde3ff" />
-        {w.moons.map((m, i) => <circle key={i} cx={7 + i * 4.5} cy={0} r={1.6} fill="#9fb0c8" />)}
+        {w.moons.map((_, i) => <circle key={i} cx={7 + i * 4.5} cy={0} r={1.6} fill="#9fb0c8" />)}
       </g>
     </svg>
   );

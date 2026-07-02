@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1",
+  "name": "tidally locked #3",
+  "world_type": "tidally_locked",
+  "age_gyr": 6.132351255044341,
+  "seed": 2619962458,
+  "host_star": {
+    "catalog_id": "HIP57443",
+    "galactic_xyz_pc": [
+      2.92742536260215,
+      -8.13164694993981,
+      3.2674723748439582
+    ],
+    "space_velocity_kms": [
+      -65.17356998483554,
+      -23.76629004265688,
+      -0.755421288585443
+    ],
+    "mass_msun": 0.9408396925174036,
+    "luminosity_lsun": 0.8078016009973886,
+    "teff_k": 5607.202586296215,
+    "radius_rsun": 0.952384908701434
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1,
+    "rotation_period_s": 3804265.0537345307,
+    "axial_tilt_deg": 7.994702510535717,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 82.00529748946428
+    },
+    "orbit": {
+      "a_au": 0.23912028019598858,
+      "e": 0.028998397635295985,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "HIP57443",
+      "real": true,
+      "note": "real catalog star HIP57443: observed galactic position & space velocity; luminosity from its absolute magnitude (M=5.06, BP-RP 0.66)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 0.8078,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 0.9408,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 0.9524,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 5607,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 0.2391,
+      "note": "sampled inside the tidal-locking radius a_lock=0.566 AU (Gladman 1996: tau_lock < system age)"
+    },
+    "planet.orbit.e": {
+      "value": 0.029,
+      "note": "sampled for a tidally locked world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 7.9947,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 3804265,
+      "note": "= orbital period: spin-orbit synchronous (Kepler from a and host mass)"
+    }
+  }
+}

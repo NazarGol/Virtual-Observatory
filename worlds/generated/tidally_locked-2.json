@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1",
+  "name": "tidally locked #2",
+  "world_type": "tidally_locked",
+  "age_gyr": 7.138346461579204,
+  "seed": 2603184839,
+  "host_star": {
+    "catalog_id": "Gaia DR3 6847167606385195648",
+    "galactic_xyz_pc": [
+      7.390555047087242,
+      2.067034612877807,
+      -4.324697471240105
+    ],
+    "space_velocity_kms": [
+      -72.37980271086438,
+      -11.568672550007095,
+      -18.392114656384017
+    ],
+    "mass_msun": 0.783583786406893,
+    "luminosity_lsun": 0.425891570266883,
+    "teff_k": 5140.636635664059,
+    "radius_rsun": 0.8227508751842414
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1,
+    "rotation_period_s": 3610454.26379581,
+    "axial_tilt_deg": 3.329485623165965,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 86.67051437683403
+    },
+    "orbit": {
+      "a_au": 0.21727031844932965,
+      "e": 0.0021096265967935324,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "Gaia DR3 6847167606385195648",
+      "real": true,
+      "note": "real catalog star Gaia DR3 6847167606385195648: observed galactic position & space velocity; luminosity from its absolute magnitude (M=5.76, BP-RP 1.08)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 0.4259,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 0.7836,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 0.8228,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 5141,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 0.2173,
+      "note": "sampled inside the tidal-locking radius a_lock=0.546 AU (Gladman 1996: tau_lock < system age)"
+    },
+    "planet.orbit.e": {
+      "value": 0.0021,
+      "note": "sampled for a tidally locked world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 3.3295,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 3610454,
+      "note": "= orbital period: spin-orbit synchronous (Kepler from a and host mass)"
+    }
+  }
+}

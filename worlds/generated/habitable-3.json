@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1",
+  "name": "habitable #3",
+  "world_type": "habitable",
+  "age_gyr": 3.7514707297086716,
+  "seed": 2424897512,
+  "host_star": {
+    "catalog_id": "Gaia DR3 4847957293278177024",
+    "galactic_xyz_pc": [
+      -1.1127573788302954,
+      -3.183599700315265,
+      -5.012098816996684
+    ],
+    "space_velocity_kms": [
+      -78.68009472480897,
+      -92.96602356630807,
+      -29.255914437325167
+    ],
+    "mass_msun": 0.9172237603647792,
+    "luminosity_lsun": 0.7390325000910687,
+    "teff_k": 5539.902077063899,
+    "radius_rsun": 0.9332118334507378
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1,
+    "rotation_period_s": 136870.9671534598,
+    "axial_tilt_deg": 20.123526809038594,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 69.8764731909614
+    },
+    "orbit": {
+      "a_au": 1.0720027470635334,
+      "e": 0.04351764939492569,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "Gaia DR3 4847957293278177024",
+      "real": true,
+      "note": "real catalog star Gaia DR3 4847957293278177024: observed galactic position & space velocity; luminosity from its absolute magnitude (M=5.16, BP-RP 0.93)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 0.739,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 0.9172,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 0.9332,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 5540,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 1.072,
+      "note": "sampled in the host's habitable zone [0.820, 1.181] AU"
+    },
+    "planet.orbit.e": {
+      "value": 0.0435,
+      "note": "sampled for a habitable world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 20.1235,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 136871,
+      "note": "sampled"
+    }
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1",
+  "name": "cold distant #3",
+  "world_type": "cold_distant",
+  "age_gyr": 3.336948238313198,
+  "seed": 3398711268,
+  "host_star": {
+    "catalog_id": "Gaia DR3 3683687763520080384",
+    "galactic_xyz_pc": [
+      2.69337047579644,
+      -5.102271254810476,
+      10.549482055280066
+    ],
+    "space_velocity_kms": [
+      -31.627484160254074,
+      -14.574471633725553,
+      1.025796748450136
+    ],
+    "mass_msun": 1.6046017968018407,
+    "luminosity_lsun": 5.233418431839477,
+    "teff_k": 7225.630975019879,
+    "radius_rsun": 1.4598015463077796
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1,
+    "rotation_period_s": 42330.33708482981,
+    "axial_tilt_deg": 4.826974673196673,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 85.17302532680333
+    },
+    "orbit": {
+      "a_au": 25.35616693696586,
+      "e": 0.01722786626778543,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "Gaia DR3 3683687763520080384",
+      "real": true,
+      "note": "real catalog star Gaia DR3 3683687763520080384: observed galactic position & space velocity; luminosity from its absolute magnitude (M=3.03, BP-RP 0.60)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 5.2334,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 1.6046,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 1.4598,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 7226,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 25.3562,
+      "note": "sampled far beyond the outer HZ, where the host's flux < 0.3 S_earth (a small, dim sun)"
+    },
+    "planet.orbit.e": {
+      "value": 0.0172,
+      "note": "sampled for a cold distant world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 4.827,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 42330,
+      "note": "sampled"
+    }
+  }
+}

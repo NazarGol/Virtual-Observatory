@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1",
+  "name": "eccentric #1",
+  "world_type": "eccentric",
+  "age_gyr": 2.1338566560298204,
+  "seed": 3864762668,
+  "host_star": {
+    "catalog_id": "HIP68682",
+    "galactic_xyz_pc": [
+      6.575949937174446,
+      -0.8706654762768048,
+      15.217346247867424
+    ],
+    "space_velocity_kms": [
+      18.43036788004828,
+      -14.169688033899078,
+      -8.77513283252969
+    ],
+    "mass_msun": 0.9145523872739856,
+    "luminosity_lsun": 0.7315264894051932,
+    "teff_k": 5532.232218769079,
+    "radius_rsun": 0.9310368493324437
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1,
+    "rotation_period_s": 65360.21027863026,
+    "axial_tilt_deg": 33.45328555558808,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 56.54671444441192
+    },
+    "orbit": {
+      "a_au": 1.0166252861002425,
+      "e": 0.47191903505008664,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "HIP68682",
+      "real": true,
+      "note": "real catalog star HIP68682: observed galactic position & space velocity; luminosity from its absolute magnitude (M=5.17, BP-RP 0.73)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 0.7315,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 0.9146,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 0.931,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 5532,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 1.0166,
+      "note": "semi-major axis near the host's HZ; the apparent sun then pulses in size over the year"
+    },
+    "planet.orbit.e": {
+      "value": 0.4719,
+      "note": "sampled for a eccentric world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 33.4533,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 65360,
+      "note": "sampled"
+    }
+  }
+}

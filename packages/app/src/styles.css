@@ -71,3 +71,10 @@ button:disabled { opacity: .45; cursor: default; }
 .cstats .row { padding: 1px 0; }
 .checks { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; border-top: 1px solid #121d31; padding-top: 6px; }
 .check { color: #9bb39c; font-size: 11px; } .check .tick { color: #5fd08a; font-weight: 700; }
+.prov { margin-top: 6px; border-top: 1px solid #121d31; padding-top: 5px; }
+.provlist { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
+.provrow { font-size: 10.5px; color: #93a1bd; line-height: 1.35; }
+.provrow b { color: #c3cde0; font-weight: 600; }
+.preal, .pgen { display: inline-block; min-width: 26px; text-align: center; border-radius: 3px; font-size: 9px;
+  font-weight: 700; text-transform: uppercase; padding: 0 3px; margin-right: 3px; }
+.preal { background: #16402a; color: #7fe0a5; } .pgen { background: #3a2b12; color: #ffcf7a; }

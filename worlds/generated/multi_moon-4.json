@@ -1,0 +1,142 @@
+{
+  "schema_version": "0.1",
+  "name": "multi moon #4",
+  "world_type": "multi_moon",
+  "age_gyr": 2.890558198094368,
+  "seed": 3479801388,
+  "host_star": {
+    "catalog_id": "Gaia DR3 1384195086792268800",
+    "galactic_xyz_pc": [
+      3.851417065204406,
+      9.391149564328522,
+      12.232795175264394
+    ],
+    "space_velocity_kms": [
+      -41.49934033993682,
+      10.946399218415339,
+      -68.09355951070995
+    ],
+    "mass_msun": 1.4500543054895871,
+    "luminosity_lsun": 3.6715118566357483,
+    "teff_k": 6886.266870014375,
+    "radius_rsun": 1.3461932658396625
+  },
+  "planet": {
+    "radius_km": 5075.240345671773,
+    "mass_mearth": 2.265543004823849,
+    "rotation_period_s": 93594.32413727045,
+    "axial_tilt_deg": 11.090448293834925,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 78.90955170616508
+    },
+    "orbit": {
+      "a_au": 3.5590943489169042,
+      "e": 0.043706687982194126,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1830.092850048095,
+      "albedo": 0.2721444639936089,
+      "orbit": {
+        "a_au": 0.00036561654008844026,
+        "e": 0.0020941090187989175,
+        "i_deg": 2.527129779336974,
+        "Omega_deg": 88.77178229391575,
+        "omega_deg": 215.20171989686787,
+        "M0_deg": 114.43710434250534,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon b",
+      "radius_km": 1843.9439612440765,
+      "albedo": 0.0646208181604743,
+      "orbit": {
+        "a_au": 0.0008171704581422539,
+        "e": 0.02504238239256665,
+        "i_deg": 2.364506256999448,
+        "Omega_deg": 124.99267816543579,
+        "omega_deg": 223.75641985796392,
+        "M0_deg": 332.0628584828228,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon c",
+      "radius_km": 1207.3835019022226,
+      "albedo": 0.16226305441930888,
+      "orbit": {
+        "a_au": 0.001815333185329959,
+        "e": 0.023265548057388515,
+        "i_deg": 3.345200939802453,
+        "Omega_deg": 152.09959410130978,
+        "omega_deg": 260.7003517728299,
+        "M0_deg": 158.53045701049268,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "Gaia DR3 1384195086792268800",
+      "real": true,
+      "note": "real catalog star Gaia DR3 1384195086792268800: observed galactic position & space velocity; luminosity from its absolute magnitude (M=3.42, BP-RP 0.78)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 3.6715,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 1.4501,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 1.3462,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 6886,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 3.5591,
+      "note": "sampled near the host's habitable zone"
+    },
+    "planet.orbit.e": {
+      "value": 0.0437,
+      "note": "sampled for a multi moon world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 11.0904,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 93594,
+      "note": "sampled"
+    },
+    "moons": {
+      "value": 3,
+      "note": "each moon Roche < a < 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
+    }
+  }
+}

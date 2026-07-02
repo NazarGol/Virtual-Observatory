@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.1",
+  "name": "habitable #1",
+  "world_type": "habitable",
+  "age_gyr": 5.429481465369463,
+  "seed": 2458452750,
+  "host_star": {
+    "catalog_id": "HIP71681",
+    "galactic_xyz_pc": [
+      0.9648182881751318,
+      -0.940532203392861,
+      -0.01602461194337068
+    ],
+    "space_velocity_kms": [
+      -12.836789505881228,
+      -13.421530783802066,
+      14.865423581393625
+    ],
+    "mass_msun": 0.7948780285220902,
+    "luminosity_lsun": 0.4477666298995392,
+    "teff_k": 5175.699536879986,
+    "radius_rsun": 0.8322243030585781
+  },
+  "planet": {
+    "radius_km": 6371,
+    "mass_mearth": 1,
+    "rotation_period_s": 129477.56688147783,
+    "axial_tilt_deg": 32.30554215610027,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 57.69445784389973
+    },
+    "orbit": {
+      "a_au": 0.6442161752812796,
+      "e": 0.0421470721019432,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "HIP71681",
+      "real": true,
+      "note": "real catalog star HIP71681: observed galactic position & space velocity; luminosity from its absolute magnitude (M=5.70, BP-RP 0.90)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 0.4478,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 0.7949,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 0.8322,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 5176,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 0.6442,
+      "note": "sampled in the host's habitable zone [0.638, 0.919] AU"
+    },
+    "planet.orbit.e": {
+      "value": 0.0421,
+      "note": "sampled for a habitable world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 32.3055,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 129478,
+      "note": "sampled"
+    }
+  }
+}

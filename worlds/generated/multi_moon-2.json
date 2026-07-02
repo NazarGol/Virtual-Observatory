@@ -1,0 +1,156 @@
+{
+  "schema_version": "0.1",
+  "name": "multi moon #2",
+  "world_type": "multi_moon",
+  "age_gyr": 8.377456730231643,
+  "seed": 3513356626,
+  "host_star": {
+    "catalog_id": "HIP95447",
+    "galactic_xyz_pc": [
+      10.254172551892857,
+      11.140347037757012,
+      -0.49341595919313974
+    ],
+    "space_velocity_kms": [
+      -48.51696300271561,
+      43.60586540772823,
+      -23.74636770766698
+    ],
+    "mass_msun": 1.1593724954499574,
+    "luminosity_lsun": 1.6779556424697903,
+    "teff_k": 6192.018484612936,
+    "radius_rsun": 1.1255852529626411
+  },
+  "planet": {
+    "radius_km": 7157.366266474128,
+    "mass_mearth": 1.8684659746009857,
+    "rotation_period_s": 56783.614823408425,
+    "axial_tilt_deg": 25.007017613388598,
+    "north_pole_inertial": {
+      "ra_deg": 0,
+      "dec_deg": 64.9929823866114
+    },
+    "orbit": {
+      "a_au": 2.2589878698612518,
+      "e": 0.026624350715428593,
+      "i_deg": 0,
+      "Omega_deg": 0,
+      "omega_deg": 0,
+      "M0_deg": 0,
+      "epoch_jd": 2451545
+    }
+  },
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1546.8680096790195,
+      "albedo": 0.2443453370220959,
+      "orbit": {
+        "a_au": 0.00031681413688074286,
+        "e": 0.028866253551095723,
+        "i_deg": 0.13364570564590394,
+        "Omega_deg": 343.0610858928412,
+        "omega_deg": 301.91106987185776,
+        "M0_deg": 92.56463983096182,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon b",
+      "radius_km": 1241.0268105566502,
+      "albedo": 0.2572710140794515,
+      "orbit": {
+        "a_au": 0.0006461735844192804,
+        "e": 0.01644840148743242,
+        "i_deg": 1.8193077307660133,
+        "Omega_deg": 332.11510808207095,
+        "omega_deg": 165.24175736121833,
+        "M0_deg": 139.11109409295022,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon c",
+      "radius_km": 1965.3434748761356,
+      "albedo": 0.23953688140958546,
+      "orbit": {
+        "a_au": 0.001658232458688025,
+        "e": 0.009382406738586724,
+        "i_deg": 0.8108526829164475,
+        "Omega_deg": 266.50854061357677,
+        "omega_deg": 254.03616928495467,
+        "M0_deg": 110.00082316808403,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon d",
+      "radius_km": 1992.6076131872833,
+      "albedo": 0.06955045955255627,
+      "orbit": {
+        "a_au": 0.003917500370161882,
+        "e": 0.02605316139757633,
+        "i_deg": 3.532053566304967,
+        "Omega_deg": 264.43151590414345,
+        "omega_deg": 212.5036704260856,
+        "M0_deg": 65.79241588711739,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
+  "observer": {
+    "lat_deg": 0,
+    "lon_deg": 0,
+    "elevation_m": 0
+  },
+  "epoch_jd": 2451545,
+  "catalog_ref": "catalog/local_volume_300pc.json",
+  "provenance": {
+    "host": {
+      "value": "HIP95447",
+      "real": true,
+      "note": "real catalog star HIP95447: observed galactic position & space velocity; luminosity from its absolute magnitude (M=4.27, BP-RP 0.76)"
+    },
+    "host_star.galactic_xyz_pc": {
+      "real": true,
+      "note": "real: the host star's catalog position (the observer's vantage)"
+    },
+    "host_star.luminosity_lsun": {
+      "value": 1.678,
+      "real": true,
+      "note": "real-derived: from the host's observed absolute magnitude (distance + apparent mag)"
+    },
+    "host_star.mass_msun": {
+      "value": 1.1594,
+      "note": "derived: mass-luminosity relation L = M^3.5"
+    },
+    "host_star.radius_rsun": {
+      "value": 1.1256,
+      "note": "derived: main-sequence radius R = M^0.8"
+    },
+    "host_star.teff_k": {
+      "value": 6192,
+      "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
+    },
+    "planet.orbit.a_au": {
+      "value": 2.259,
+      "note": "sampled near the host's habitable zone"
+    },
+    "planet.orbit.e": {
+      "value": 0.0266,
+      "note": "sampled for a multi moon world"
+    },
+    "planet.axial_tilt_deg": {
+      "value": 25.007,
+      "note": "sampled"
+    },
+    "planet.rotation_period_s": {
+      "value": 56784,
+      "note": "sampled"
+    },
+    "moons": {
+      "value": 4,
+      "note": "each moon Roche < a < 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
+    }
+  }
+}

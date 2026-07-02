@@ -1,0 +1,176 @@
+{
+  "generated_by": "tools/emit_worlds.ts",
+  "catalog": "local_volume_300pc.json",
+  "host_count": 120,
+  "count": 24,
+  "worlds": [
+    {
+      "type": "habitable",
+      "file": "habitable-1.json",
+      "host_id": "HIP71681",
+      "name": "habitable #1",
+      "seed": 2458452750
+    },
+    {
+      "type": "habitable",
+      "file": "habitable-2.json",
+      "host_id": "HIP88601",
+      "name": "habitable #2",
+      "seed": 2475230369
+    },
+    {
+      "type": "habitable",
+      "file": "habitable-3.json",
+      "host_id": "Gaia DR3 4847957293278177024",
+      "name": "habitable #3",
+      "seed": 2424897512
+    },
+    {
+      "type": "habitable",
+      "file": "habitable-4.json",
+      "host_id": "HIP3765",
+      "name": "habitable #4",
+      "seed": 2441675131
+    },
+    {
+      "type": "tidally_locked",
+      "file": "tidally_locked-1.json",
+      "host_id": "Gaia DR3 4911306239828325760",
+      "name": "tidally locked #1",
+      "seed": 2586407220
+    },
+    {
+      "type": "tidally_locked",
+      "file": "tidally_locked-2.json",
+      "host_id": "Gaia DR3 6847167606385195648",
+      "name": "tidally locked #2",
+      "seed": 2603184839
+    },
+    {
+      "type": "tidally_locked",
+      "file": "tidally_locked-3.json",
+      "host_id": "HIP57443",
+      "name": "tidally locked #3",
+      "seed": 2619962458
+    },
+    {
+      "type": "tidally_locked",
+      "file": "tidally_locked-4.json",
+      "host_id": "HIP68184",
+      "name": "tidally locked #4",
+      "seed": 2636740077
+    },
+    {
+      "type": "cold_distant",
+      "file": "cold_distant-1.json",
+      "host_id": "HIP10138",
+      "name": "cold distant #1",
+      "seed": 3432266506
+    },
+    {
+      "type": "cold_distant",
+      "file": "cold_distant-2.json",
+      "host_id": "HIP64797",
+      "name": "cold distant #2",
+      "seed": 3449044125
+    },
+    {
+      "type": "cold_distant",
+      "file": "cold_distant-3.json",
+      "host_id": "Gaia DR3 3683687763520080384",
+      "name": "cold distant #3",
+      "seed": 3398711268
+    },
+    {
+      "type": "cold_distant",
+      "file": "cold_distant-4.json",
+      "host_id": "Gaia DR3 5826168461855385472",
+      "name": "cold distant #4",
+      "seed": 3415488887
+    },
+    {
+      "type": "high_obliquity",
+      "file": "high_obliquity-1.json",
+      "host_id": "Gaia DR3 5117974602912370432",
+      "name": "high obliquity #1",
+      "seed": 991549157
+    },
+    {
+      "type": "high_obliquity",
+      "file": "high_obliquity-2.json",
+      "host_id": "Gaia DR3 2756363608023588864",
+      "name": "high obliquity #2",
+      "seed": 974771538
+    },
+    {
+      "type": "high_obliquity",
+      "file": "high_obliquity-3.json",
+      "host_id": "HIP14879",
+      "name": "high obliquity #3",
+      "seed": 957993919
+    },
+    {
+      "type": "high_obliquity",
+      "file": "high_obliquity-4.json",
+      "host_id": "Gaia DR3 1333760419707327744",
+      "name": "high obliquity #4",
+      "seed": 941216300
+    },
+    {
+      "type": "multi_moon",
+      "file": "multi_moon-1.json",
+      "host_id": "HIP47592",
+      "name": "multi moon #1",
+      "seed": 3530134245
+    },
+    {
+      "type": "multi_moon",
+      "file": "multi_moon-2.json",
+      "host_id": "HIP95447",
+      "name": "multi moon #2",
+      "seed": 3513356626
+    },
+    {
+      "type": "multi_moon",
+      "file": "multi_moon-3.json",
+      "host_id": "HIP2941",
+      "name": "multi moon #3",
+      "seed": 3496579007
+    },
+    {
+      "type": "multi_moon",
+      "file": "multi_moon-4.json",
+      "host_id": "Gaia DR3 1384195086792268800",
+      "name": "multi moon #4",
+      "seed": 3479801388
+    },
+    {
+      "type": "eccentric",
+      "file": "eccentric-1.json",
+      "host_id": "HIP68682",
+      "name": "eccentric #1",
+      "seed": 3864762668
+    },
+    {
+      "type": "eccentric",
+      "file": "eccentric-2.json",
+      "host_id": "HIP43726",
+      "name": "eccentric #2",
+      "seed": 3881540287
+    },
+    {
+      "type": "eccentric",
+      "file": "eccentric-3.json",
+      "host_id": "Gaia DR3 5989102478619519616",
+      "name": "eccentric #3",
+      "seed": 3898317906
+    },
+    {
+      "type": "eccentric",
+      "file": "eccentric-4.json",
+      "host_id": "Gaia DR3 3732539683617410816",
+      "name": "eccentric #4",
+      "seed": 3915095525
+    }
+  ]
+}
