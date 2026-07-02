@@ -15,6 +15,7 @@ import {
 } from "./sky";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
+import { milkyWayGeometry } from "./milkyway";
 import { geodesicArc, type StarPoint } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
@@ -68,15 +69,19 @@ export function App() {
   const [tool, setTool] = useState<Tool>("select");
   const [pendingLabel, setPendingLabel] = useState<string | null>(null); // anchor id awaiting text
   const [fov, setFov] = useState(60);
+  const [exposure, setExposure] = useState(0);
+  const [showMilkyWay, setShowMilkyWay] = useState(true);
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
   const [notebook, setNotebook] = useState<Notebook>(() => loadJSON(KEY.note, parseNotebook, emptyNotebook()));
   const setFovRef = useRef<(f: number) => void>(() => {});
+  const setExposureRef = useRef<(v: number) => void>(() => {});
 
   useEffect(() => { loadSky().then(setSky).catch((e) => setError(String(e))); }, []);
 
   const sessionInfo = useMemo(() => (sky ? buildSession(sky, vantage) : null), [sky, vantage]);
+  const mw = useMemo(() => milkyWayGeometry(sessionInfo ? sessionInfo.observer.origin_pc : [0, 0, 0]), [sessionInfo]);
   useEffect(() => {
     if (!sessionInfo) return;
     sessionInfo.session.recomputeInertial(tYears);
@@ -204,11 +209,15 @@ export function App() {
         figures={figureArcs} labels={labelSprites}
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
+        exposureRef={(fn) => (setExposureRef.current = fn)}
+        milkyWay={{ normalIcrs: mw.diskNormalIcrs, centerIcrs: mw.galacticCenterIcrs, gain: showMilkyWay ? 1 : 0 }}
       />
 
       <aside className="side">
         <Toolbar tool={tool} onTool={onTool} vantage={vantage} setVantage={setVantage}
-          fov={fov} nudgeFov={nudgeFov} selection={selection} draft={draft}
+          fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
+          showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
+          selection={selection} draft={draft}
           onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
           pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
         <Readout sky={sky} t={tYears} dir={focusDir} meta={focusMeta} />
@@ -230,7 +239,9 @@ export function App() {
 
 function Toolbar(props: {
   tool: Tool; onTool: (t: Tool) => void; vantage: Vantage; setVantage: (v: Vantage) => void;
-  fov: number; nudgeFov: (f: number) => void; selection: string[]; draft: string[];
+  fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
+  showMilkyWay: boolean; onMilkyWay: () => void;
+  selection: string[]; draft: string[];
   onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
   pendingLabelName: string | null; onSubmitLabel: (t: string) => void; onCancelLabel: () => void;
 }) {
@@ -246,6 +257,12 @@ function Toolbar(props: {
       </div>
       <div className="row" style={{ marginTop: 6 }}><span className="k">FOV {props.fov.toFixed(1)}°</span>
         <span className="btns"><button onClick={() => props.nudgeFov(1 / 1.4)}>zoom +</button><button onClick={() => props.nudgeFov(1.4)}>zoom −</button></span>
+      </div>
+      <div className="row" style={{ marginTop: 6 }}><span className="k">exposure {props.exposure >= 0 ? "+" : ""}{props.exposure.toFixed(1)}</span>
+        <input type="range" min={-3} max={4} step={0.1} value={props.exposure} onChange={(e) => props.onExposure(Number(e.target.value))} style={{ width: 130 }} />
+      </div>
+      <div className="row" style={{ marginTop: 6 }}><span className="k">background</span>
+        <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
       </div>
       <div className="muted" style={{ marginTop: 8 }}>tools</div>
       <div className="btns" style={{ marginTop: 4 }}>

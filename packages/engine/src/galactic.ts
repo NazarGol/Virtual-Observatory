@@ -35,6 +35,11 @@ const GC2ICRS = GALACTOCENTRIC_TO_ICRS;
 
 export { KM_S_TO_KPC_MYR, G_KPC_MSUN_MYR, MW_POTENTIAL, SUN_GALACTOCENTRIC } from "./galactic_frame.js";
 
+/** Rotate a galactocentric vector into ICRS axes (e.g. for the disk normal / GC direction). */
+export function galactocentricToIcrs(v: Vec3): Vec3 {
+  return matVecMul(GC2ICRS, v);
+}
+
 /** Acceleration (kpc/Myr^2) at galactocentric position p (kpc) in the MW potential. */
 export function galacticAccel(p: Vec3): Vec3 {
   const [x, y, z] = p;

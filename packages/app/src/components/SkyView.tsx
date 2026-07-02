@@ -12,6 +12,8 @@ interface Props {
   onPickIndex: (i: number | null) => void;
   onFov: (fov: number) => void;
   fovRef: (setFov: (f: number) => void) => void;
+  exposureRef: (setExposure: (v: number) => void) => void;
+  milkyWay: { normalIcrs: Vec3; centerIcrs: Vec3; gain: number };
 }
 
 export function SkyView(props: Props) {
@@ -27,6 +29,7 @@ export function SkyView(props: Props) {
     field.onView = (f) => cb.current.onFov(f);
     fieldRef.current = field;
     cb.current.fovRef((f) => field.setFov(f));
+    cb.current.exposureRef((v) => field.setExposure(v));
     const onResize = () => field.resize();
     window.addEventListener("resize", onResize);
     return () => { window.removeEventListener("resize", onResize); field.dispose(); fieldRef.current = null; };
@@ -37,6 +40,8 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setOverlays(props.overlays); }, [props.overlays]);
   useEffect(() => { fieldRef.current?.setFigures(props.figures); }, [props.figures]);
   useEffect(() => { fieldRef.current?.setLabels(props.labels); }, [props.labels]);
+  useEffect(() => { fieldRef.current?.setMilkyWay(props.milkyWay.normalIcrs, props.milkyWay.centerIcrs, props.milkyWay.gain); },
+    [props.milkyWay]);
 
   return <div className="sky" ref={mountRef} />;
 }

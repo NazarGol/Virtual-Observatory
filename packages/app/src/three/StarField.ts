@@ -18,8 +18,10 @@ const tint = (bp: number): [number, number, number] => {
   const t = Math.max(0, Math.min(1, ((bp ?? 0.6) + 0.4) / 2.2));
   return [0.62 + 0.38 * t, 0.72 + 0.12 * Math.sin(t * Math.PI), 1.0 - 0.45 * t];
 };
-const lumOf = (m: number) => Math.max(0.06, Math.min(1, Math.pow((7.5 - m) / 9.0, 1.6)));
-const sizeOf = (m: number) => 1.8 + Math.max(0, 2.2 - m) * 1.2;
+// Brightness (Phase 5): the shader maps magnitude -> flux -> tone-mapped luminance so the
+// ~100x naked-eye range isn't linear-crushed; a size floor keeps faint stars from vanishing
+// sub-pixel; the brightest handful bloom. Exposure/gain is a live uniform.
+const MAG_ZERO_DEFAULT = 4.2; // magnitude that sits at mid-brightness at exposure 0
 
 function ringTexture(): THREE.Texture {
   const c = document.createElement("canvas");
@@ -44,6 +46,10 @@ export class StarField {
   private camera: THREE.PerspectiveCamera;
   private points?: THREE.Points;
   private geom?: THREE.BufferGeometry;
+  private starMat?: THREE.ShaderMaterial;
+  private exposure = 0;
+  private mwMesh?: THREE.Mesh;
+  private mwMat?: THREE.ShaderMaterial;
   private selGroup = new THREE.Group();
   private overlayGroup = new THREE.Group();
   private figureGroup = new THREE.Group();
@@ -124,32 +130,84 @@ export class StarField {
 
   setStars(stars: StarPoint[]): void {
     const N = stars.length;
-    const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+    const pos = new Float32Array(N * 3), tnt = new Float32Array(N * 3), mag = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const s = stars[i];
       pos[i * 3] = s.dir[0] * R; pos[i * 3 + 1] = s.dir[1] * R; pos[i * 3 + 2] = s.dir[2] * R;
-      const c = tint(s.bp_rp), l = lumOf(s.mag);
-      col[i * 3] = c[0] * l; col[i * 3 + 1] = c[1] * l; col[i * 3 + 2] = c[2] * l;
-      sz[i] = sizeOf(s.mag);
+      const c = tint(s.bp_rp);
+      tnt[i * 3] = c[0]; tnt[i * 3 + 1] = c[1]; tnt[i * 3 + 2] = c[2];
+      mag[i] = s.mag;
     }
     if (!this.geom) {
       this.geom = new THREE.BufferGeometry();
-      const mat = new THREE.ShaderMaterial({
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
-        uniforms: { uDpr: { value: this.dpr } },
-        vertexShader: `attribute float psize; varying vec3 vC; uniform float uDpr; void main(){ vC=color;
-          gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_PointSize=psize*uDpr; }`,
-        fragmentShader: `varying vec3 vC; void main(){ vec2 d=gl_PointCoord-vec2(0.5);
-          float r=length(d); if(r>0.5) discard; gl_FragColor=vec4(vC, smoothstep(0.5,0.06,r)); }`,
+      this.starMat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: { uDpr: { value: this.dpr }, uExposure: { value: this.exposure }, uZero: { value: MAG_ZERO_DEFAULT } },
+        vertexShader: `
+          attribute vec3 tint; attribute float mag;
+          uniform float uDpr, uExposure, uZero;
+          varying vec3 vC; varying float vBloom;
+          void main(){
+            float flux = pow(2.512, (uZero + uExposure) - mag);   // relative flux (huge range)
+            float lum = flux / (flux + 1.0);                       // Reinhard tone-map -> [0,1)
+            vBloom = smoothstep(0.86, 1.0, lum);
+            vC = tint * clamp(lum * 1.15, 0.045, 1.0);             // floor keeps faint stars visible
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = (1.4 + 2.4 * lum + 3.4 * vBloom) * uDpr; // floor + bloom on the brightest
+          }`,
+        fragmentShader: `
+          varying vec3 vC; varying float vBloom;
+          void main(){
+            vec2 d = gl_PointCoord - vec2(0.5); float r = length(d);
+            if (r > 0.5) discard;
+            float core = smoothstep(0.5, 0.06, r);
+            float halo = vBloom * smoothstep(0.5, 0.0, r) * 0.6;   // soft glow only on bright stars
+            gl_FragColor = vec4(vC, core + halo);
+          }`,
       });
-      this.points = new THREE.Points(this.geom, mat);
+      this.points = new THREE.Points(this.geom, this.starMat);
       this.points.frustumCulled = false;
       this.scene.add(this.points);
     }
     this.geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    this.geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    this.geom.setAttribute("psize", new THREE.BufferAttribute(sz, 1));
+    this.geom.setAttribute("tint", new THREE.BufferAttribute(tnt, 3));
+    this.geom.setAttribute("mag", new THREE.BufferAttribute(mag, 1));
     this.geom.attributes.position.needsUpdate = true;
+  }
+
+  /** Live exposure/gain (stops): shifts the magnitude that reads as mid-brightness. */
+  setExposure(stops: number): void {
+    this.exposure = stops;
+    if (this.starMat) this.starMat.uniforms.uExposure!.value = stops;
+  }
+  getExposure(): number { return this.exposure; }
+
+  /** Vantage-dependent Milky Way band: diffuse glow along the disk plane (perpendicular to
+   *  normalIcrs), brightest toward centerIcrs. gain=0 hides it. */
+  setMilkyWay(normalIcrs: Vec3, centerIcrs: Vec3, gain: number): void {
+    if (!this.mwMesh) {
+      this.mwMat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide,
+        uniforms: { uNormal: { value: new THREE.Vector3() }, uCenter: { value: new THREE.Vector3() }, uGain: { value: 0 } },
+        vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `varying vec3 vDir; uniform vec3 uNormal; uniform vec3 uCenter; uniform float uGain;
+          void main(){ vec3 d = normalize(vDir);
+            float lat = asin(clamp(dot(d, uNormal), -1.0, 1.0));       // angle from the disk plane
+            float band = exp(-pow(lat / 0.16, 2.0));                   // Gaussian, ~9 deg half-width
+            float toward = 0.30 + 0.70 * max(0.0, dot(d, uCenter));    // brighter toward galactic center
+            float b = band * toward * uGain;
+            gl_FragColor = vec4(vec3(0.55, 0.58, 0.72) * b, b); }`,
+      });
+      this.mwMesh = new THREE.Mesh(new THREE.SphereGeometry(300, 48, 32), this.mwMat);
+      this.mwMesh.renderOrder = -1;
+      this.mwMesh.frustumCulled = false;
+      this.scene.add(this.mwMesh);
+    }
+    this.mwMat!.uniforms.uNormal!.value.set(normalIcrs[0], normalIcrs[1], normalIcrs[2]);
+    this.mwMat!.uniforms.uCenter!.value.set(centerIcrs[0], centerIcrs[1], centerIcrs[2]);
+    this.mwMat!.uniforms.uGain!.value = gain;
+    this.mwMesh!.visible = gain > 0;
   }
 
   setSelection(dirs: Vec3[]): void {
