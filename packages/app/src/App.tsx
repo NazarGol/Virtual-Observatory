@@ -3,7 +3,7 @@ import {
   resolveMeasurement, serializeMeasurements, parseMeasurements,
   serializeAnnotations, parseAnnotations, resolveFigure, resolveLabel,
   serializeNotebook, parseNotebook, emptyNotebook,
-  PROPAGATION_MODELS,
+  PROPAGATION_MODELS, findMinSeparation,
   parseWorld, planetOrientation, worldObserver, worldBodies,
   type World, type PlanetOrientation, type GeoObserver,
   type MeasurementDef, type MeasurementKind, type MeasurementResult,
@@ -59,6 +59,8 @@ const PLAY_RATES: { label: string; yps: number }[] = [
 ];
 
 type WorldClock = { orbitYears: number; rotDays: number; locked: boolean; type: string; name: string };
+type SkyEvent = { t: number; label: string; kind: "day" | "conj" | "eclipse" };
+type Scan = { from: number; span: number; events: SkyEvent[] };
 
 type Tool = "select" | "angular_distance" | "separation_position_angle" | "alignment" | "figure" | "label";
 const TOOL_LABEL: Record<Tool, string> = {
@@ -124,6 +126,8 @@ export function App() {
   const [fov, setFov] = useState(60);
   const [exposure, setExposure] = useState(0);
   const [showMilkyWay, setShowMilkyWay] = useState(true);
+  const [bodyTrails, setBodyTrails] = useState(false);
+  const [scanReq, setScanReq] = useState<{ from: number; span: number } | null>(null);
   const [sensor, setSensor] = useState<Sensor>("visible");
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
@@ -204,6 +208,55 @@ export function App() {
     const locked = Math.abs(rotSec - orbitSec) / orbitSec < 1e-3;
     return { orbitYears, rotDays: rotSec / 86400, locked, type: worldVantage.type, name: worldVantage.worldName };
   }, [worldVantage]);
+
+  // Body trails (B4): each body's on-sky track over one local year, sampled from the world's
+  // Keplerian bodies. Anchored at the epoch so it reads as the orbit ring the body rides.
+  const trailPaths = useMemo(() => {
+    if (!worldVantage || !bodyTrails) return [] as { pts: Vec3[]; color: number }[];
+    const span = worldClock ? worldClock.orbitYears : 1, N = 240;
+    const colorOf = (k: string) => (k === "host_star" ? 0xffcf6b : k === "moon" ? 0x9fb0c8 : 0x9fc0ff);
+    const byName = new Map<string, { pts: Vec3[]; color: number }>();
+    for (let i = 0; i <= N; i++) {
+      for (const b of worldBodies(worldVantage.world, (i / N) * span)) {
+        let e = byName.get(b.name);
+        if (!e) { e = { pts: [], color: colorOf(b.kind) }; byName.set(b.name, e); }
+        e.pts.push(b.direction_icrs as Vec3);
+      }
+    }
+    return [...byName.values()];
+  }, [worldVantage, bodyTrails, worldClock]);
+
+  // Event scanner (B4): on demand, scan a window for the host's rise/set/transit (day/night)
+  // and the closest approaches between bodies (conjunctions / occultation-eclipse candidates).
+  const scan = useMemo<Scan | null>(() => {
+    if (!scanReq || !worldVantage || !apparatus) return null;
+    const { from, span } = scanReq, world = worldVantage.world, o = apparatus.o, obs = apparatus.obs;
+    const at = (t: number) => worldBodies(world, t);
+    const bodiesNow = at(from), events: SkyEvent[] = [];
+    const host = bodiesNow.find((b) => b.kind === "host_star");
+    if (host) {
+      const rst = riseSetOf(o, obs, host.direction_icrs as Vec3, from);
+      if (rst.circumpolar) events.push({ t: from, label: `${host.name} never sets — circumpolar`, kind: "day" });
+      else if (rst.neverRises) events.push({ t: from, label: `${host.name} never rises — permanent night`, kind: "day" });
+      else {
+        if (rst.riseYears != null) events.push({ t: rst.riseYears, label: `${host.name} rises — dawn`, kind: "day" });
+        if (rst.transitYears != null) events.push({ t: rst.transitYears, label: `${host.name} transits ${rst.transitAltitudeDeg.toFixed(0)}° — local noon`, kind: "day" });
+        if (rst.setYears != null) events.push({ t: rst.setYears, label: `${host.name} sets — dusk`, kind: "day" });
+      }
+    }
+    const names = bodiesNow.map((b) => b.name);
+    const dirOf = (name: string) => (t: number) => { const b = at(t).find((x) => x.name === name); return b ? (b.direction_icrs as Vec3) : null; };
+    const radAt = (name: string, t: number) => { const b = at(t).find((x) => x.name === name); return b ? b.angularDiameterDeg / 2 : 0; };
+    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+      const c = findMinSeparation(dirOf(names[i]!), dirOf(names[j]!), from, span);
+      if (!c) continue;
+      const rSum = radAt(names[i]!, c.timeYears) + radAt(names[j]!, c.timeYears);
+      if (c.separationDeg < rSum) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} — occultation / eclipse (${c.separationDeg.toFixed(3)}°)`, kind: "eclipse" });
+      else if (c.separationDeg < 3) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} conjunction — ${c.separationDeg.toFixed(2)}°`, kind: "conj" });
+    }
+    events.sort((a, b) => a.t - b.t);
+    return { from, span, events };
+  }, [scanReq, worldVantage, apparatus]);
 
   const dirById = useMemo(() => new Map(inertial.map((s) => [s.id, s.direction_icrs])), [inertial]);
   const metaById = useMemo(() => new Map(inertial.map((s) => [s.id, s])), [inertial]);
@@ -360,7 +413,7 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers} sensor={sensor}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={trailPaths} sensor={sensor}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
@@ -371,12 +424,15 @@ export function App() {
           worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
           fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
           showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
+          bodyTrails={bodyTrails} onBodyTrails={() => setBodyTrails((v) => !v)} observing={!!worldVantage}
           sensor={sensor} onSensor={setSensor}
           projection={projection} onProjection={setProjection}
           selection={selection} draft={draft}
           onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
           pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
         <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG} />
+        <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
+          onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => setTYears(t)} />
         <Measurements results={results} metaById={metaById}
           onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
         <Annotations annotations={annotations} figures={figures}
@@ -402,6 +458,7 @@ function Toolbar(props: {
   worldVantageLabel: string | null; onClearWorldVantage: () => void;
   fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
   showMilkyWay: boolean; onMilkyWay: () => void;
+  bodyTrails: boolean; onBodyTrails: () => void; observing: boolean;
   sensor: Sensor; onSensor: (s: Sensor) => void;
   projection: Projection; onProjection: (p: Projection) => void;
   selection: string[]; draft: string[];
@@ -433,7 +490,11 @@ function Toolbar(props: {
         <input type="range" min={-3} max={4} step={0.1} value={props.exposure} onChange={(e) => props.onExposure(Number(e.target.value))} style={{ width: 130 }} />
       </div>
       <div className="row" style={{ marginTop: 6 }}><span className="k">background</span>
-        <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
+        <span className="btns">
+          <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
+          <button className={props.bodyTrails ? "active" : ""} onClick={props.onBodyTrails} disabled={!props.observing}
+            title="draw each body's on-sky track over one local year">trails</button>
+        </span>
       </div>
       <div className="muted" style={{ marginTop: 8 }}>sensor</div>
       <div className="seg" style={{ display: "flex", marginTop: 4 }}>
@@ -660,6 +721,41 @@ function ArrivalCard(props: { clock: WorldClock; hostLabel: string; distPc: numb
       <div className="muted" style={{ marginTop: 9, fontSize: 11, lineHeight: 1.45 }}>
         The sky below is this world's — the real catalog, relocated to its host.{wc.locked ? " Its star never sets." : ""}
       </div>
+    </div>
+  );
+}
+
+/** Event scanner (B4): on-demand rise/set (day-night) + body closest approaches, as
+ *  candidate events the human can jump to. Nothing is auto-named. */
+function EventScanner(props: {
+  scan: Scan | null; worldClock: WorldClock | null; observing: boolean;
+  onScan: (span: number) => void; onJump: (t: number) => void;
+}) {
+  if (!props.observing) return <div className="panel"><h2>Event scanner</h2><div className="muted">observe a world to scan its sky</div></div>;
+  const yr = props.worldClock?.orbitYears ?? 1;
+  const daySpan = props.worldClock && !props.worldClock.locked ? props.worldClock.rotDays / 365.25 : yr;
+  const KIND: Record<SkyEvent["kind"], string> = { day: "day/night", conj: "conjunction", eclipse: "eclipse" };
+  return (
+    <div className="panel">
+      <h2>Event scanner</h2>
+      <div className="btns">
+        <button onClick={() => props.onScan(daySpan)} title="rise/set/transit + approaches over the next local day">scan next day</button>
+        <button onClick={() => props.onScan(yr)} title="approaches over the next local year">next year</button>
+      </div>
+      {props.scan && (props.scan.events.length === 0
+        ? <div className="muted" style={{ marginTop: 8 }}>no rise/set or close approaches in this window</div>
+        : <div className="mlist" style={{ marginTop: 8 }}>
+            {props.scan.events.map((e, i) => (
+              <div key={i} className="mitem">
+                <div className="top">
+                  <button className="link" onClick={() => props.onJump(e.t)}>{e.label}</button>
+                  <span className="faint" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>{KIND[e.kind]}</span>
+                </div>
+                <div className="ids">t+{fmtT(e.t - props.scan!.from)}</div>
+              </div>
+            ))}
+          </div>)}
+      <div className="faint" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4 }}>candidates — computed rise/set &amp; closest approaches; confirm by eye.</div>
     </div>
   );
 }

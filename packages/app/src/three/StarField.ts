@@ -104,6 +104,8 @@ export class StarField {
   private labelGroup = new THREE.Group();
   private sunGroup = new THREE.Group();
   private bodyGroup = new THREE.Group();
+  private pathGroup = new THREE.Group();  // body trails / orbital tracks (B4)
+  private rawPaths: { pts: Vec3[]; color: number }[] = [];
   private groundGroup = new THREE.Group(); // dome ground + twilight (B8)
   private sensor: Sensor = "visible";
   private ringTex = ringTexture();
@@ -152,7 +154,7 @@ export class StarField {
     this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
     this.orthoCam.position.set(0, 0, 1);
     this.orthoCam.lookAt(0, 0, 0);
-    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup, this.groundGroup);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup, this.pathGroup, this.groundGroup);
 
     // faint celestial-equator ring for orientation (gnomonic only)
     const eq = new THREE.BufferGeometry().setFromPoints(
@@ -223,6 +225,7 @@ export class StarField {
     this.setSelection(this.rawSel);
     this.layoutSun();
     this.layoutBodies();
+    this.layoutPaths();
     this.layoutGround();
   }
 
@@ -469,6 +472,32 @@ export class StarField {
       const lab = makeTextSprite(b.name, b.kind === "host_star" ? "#ffe08a" : "#c8d2e0");
       lab.position.set(p[0], p[1], p[2]);
       this.bodyGroup.add(lab);
+    }
+  }
+
+  /** On-sky tracks for bodies (B4): where each body travels over a span. Each polyline is
+   *  projected point-by-point and broken into visible segments so it clips cleanly in
+   *  fisheye/dome. Dim, drawn behind the body discs. */
+  setPaths(paths: { pts: Vec3[]; color: number }[]): void {
+    this.rawPaths = paths;
+    this.layoutPaths();
+  }
+
+  private layoutPaths(): void {
+    this.pathGroup.clear();
+    for (const path of this.rawPaths) {
+      const mat = new THREE.LineBasicMaterial({ color: path.color, transparent: true, opacity: 0.5 });
+      let seg: THREE.Vector3[] = [];
+      const flush = () => {
+        if (seg.length >= 2) this.pathGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), mat));
+        seg = [];
+      };
+      for (const d of path.pts) {
+        const p = this.projectScene(d);
+        if (p) seg.push(new THREE.Vector3(p[0], p[1], p[2]));
+        else flush();
+      }
+      flush();
     }
   }
 

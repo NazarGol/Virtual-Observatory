@@ -15,6 +15,7 @@ interface Props {
   exposureRef: (setExposure: (v: number) => void) => void;
   milkyWayPoints: { dir: Vec3; brightness: number }[];
   bodies: BodyMarker[];
+  paths: { pts: Vec3[]; color: number }[];
   sensor: Sensor;
   projection: "gnomonic" | "fisheye" | "dome";
   horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };
@@ -47,6 +48,7 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setLabels(props.labels); }, [props.labels]);
   useEffect(() => { fieldRef.current?.setMilkyWayPoints(props.milkyWayPoints); }, [props.milkyWayPoints]);
   useEffect(() => { fieldRef.current?.setBodies(props.bodies); }, [props.bodies]);
+  useEffect(() => { fieldRef.current?.setPaths(props.paths); }, [props.paths]);
   useEffect(() => { fieldRef.current?.setSensor(props.sensor); }, [props.sensor]);
   useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
     [props.horizonBasis]);
