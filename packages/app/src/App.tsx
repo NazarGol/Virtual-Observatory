@@ -20,7 +20,7 @@ type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry, milkyWayBand } from "./milkyway";
-import { geodesicArc, type StarPoint } from "./three/StarField";
+import { geodesicArc, SENSORS, type StarPoint, type Sensor } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
 const R2D = 180 / Math.PI;
@@ -54,6 +54,21 @@ const TOOL_LABEL: Record<Tool, string> = {
   alignment: "Align", figure: "Draw figure", label: "Label",
 };
 const MEASURE_TOOLS: Tool[] = ["angular_distance", "separation_position_angle", "alignment"];
+
+// Instrument sensors (Gate B, B2). Same real catalog fields, different response curve.
+const SENSOR_LABEL: Record<Sensor, string> = {
+  visible: "Visible", thermal: "Thermal", proper_motion: "Motion", distance: "Distance", photometric: "Photom.",
+};
+const SENSOR_LEGEND: Record<Sensor, { cap: string; ramp?: string; ticks?: [string, string] }> = {
+  visible: { cap: "Perceptual channel — true star colour (Gaia BP−RP), tone-mapped brightness." },
+  thermal: { cap: "Temperature false-colour; cool stars (M dwarfs) brighten in the IR band. Derived from BP−RP.",
+    ramp: "linear-gradient(90deg,#bcd8ff,#fff1bd,#ff6a38)", ticks: ["hot", "cool"] },
+  proper_motion: { cap: "Hue & size by angular drift rate at this vantage (mas/yr). Real astrometry, computed here.",
+    ramp: "linear-gradient(90deg,#273149,#ff6bec)", ticks: ["slow", "fast"] },
+  distance: { cap: "False-colour by parallax distance from the observer. Real Gaia distances.",
+    ramp: "linear-gradient(90deg,#ff8c57,#6199ff)", ticks: ["near", "far"] },
+  photometric: { cap: "Linear response in magnitude, neutral tint — reads flux honestly for measurement." },
+};
 
 function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
   try { const s = localStorage.getItem(key); return s ? parse(s) : fallback; } catch { return fallback; }
@@ -96,6 +111,7 @@ export function App() {
   const [fov, setFov] = useState(60);
   const [exposure, setExposure] = useState(0);
   const [showMilkyWay, setShowMilkyWay] = useState(true);
+  const [sensor, setSensor] = useState<Sensor>("visible");
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
@@ -164,8 +180,24 @@ export function App() {
 
   const dirById = useMemo(() => new Map(inertial.map((s) => [s.id, s.direction_icrs])), [inertial]);
   const metaById = useMemo(() => new Map(inertial.map((s) => [s.id, s])), [inertial]);
+  // Proper motion per star at THIS vantage (mas/yr), from the drift over a fixed baseline.
+  // Rectilinear propagation makes the rate epoch-independent, so it's computed once per
+  // vantage (not per frame) -- the raw ingredient for the Proper-motion sensor.
+  const pmById = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!sky || !sessionInfo) return m;
+    const obs = sessionInfo.observer, D = 250, K = (180 / Math.PI) * 3600 * 1000; // rad -> mas
+    for (const s of sky.catalog.stars) {
+      const d0 = directionAt(sky, obs, s.id, 0), d1 = directionAt(sky, obs, s.id, D);
+      if (!d0 || !d1) continue;
+      const dot = Math.max(-1, Math.min(1, d0[0] * d1[0] + d0[1] * d1[1] + d0[2] * d1[2]));
+      m.set(s.id, (Math.acos(dot) * K) / D);
+    }
+    return m;
+  }, [sky, sessionInfo]);
   const starPoints: StarPoint[] = useMemo(
-    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp })), [inertial]);
+    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp, dist: s.distance_pc, pm: pmById.get(s.id) ?? 0 })),
+    [inertial, pmById]);
 
   const resolver: ObjectResolver = useCallback(
     (id, t) => (sky && sessionInfo ? directionAt(sky, sessionInfo.observer, id, t) : null), [sky, sessionInfo]);
@@ -281,7 +313,7 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers} sensor={sensor}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
@@ -292,6 +324,7 @@ export function App() {
           worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
           fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
           showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
+          sensor={sensor} onSensor={setSensor}
           projection={projection} onProjection={setProjection}
           selection={selection} draft={draft}
           onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
@@ -319,6 +352,7 @@ function Toolbar(props: {
   worldVantageLabel: string | null; onClearWorldVantage: () => void;
   fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
   showMilkyWay: boolean; onMilkyWay: () => void;
+  sensor: Sensor; onSensor: (s: Sensor) => void;
   projection: Projection; onProjection: (p: Projection) => void;
   selection: string[]; draft: string[];
   onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
@@ -351,7 +385,23 @@ function Toolbar(props: {
       <div className="row" style={{ marginTop: 6 }}><span className="k">background</span>
         <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
       </div>
-      <div className="row" style={{ marginTop: 6 }}><span className="k">projection</span>
+      <div className="muted" style={{ marginTop: 8 }}>sensor</div>
+      <div className="seg" style={{ display: "flex", marginTop: 4 }}>
+        {SENSORS.map((s) => (
+          <button key={s} style={{ flex: 1 }} className={props.sensor === s ? "active" : ""}
+            onClick={() => props.onSensor(s)}>{SENSOR_LABEL[s]}</button>
+        ))}
+      </div>
+      <div className="legend">
+        <div className="cap">{SENSOR_LEGEND[props.sensor].cap}</div>
+        {SENSOR_LEGEND[props.sensor].ramp && (
+          <>
+            <div className="ramp" style={{ background: SENSOR_LEGEND[props.sensor].ramp }} />
+            <div className="ticks"><span>{SENSOR_LEGEND[props.sensor].ticks![0]}</span><span>{SENSOR_LEGEND[props.sensor].ticks![1]}</span></div>
+          </>
+        )}
+      </div>
+      <div className="row" style={{ marginTop: 8 }}><span className="k">projection</span>
         <span className="btns">
           {(["gnomonic", "fisheye", "dome"] as Projection[]).map((p) =>
             <button key={p} className={props.projection === p ? "active" : ""} onClick={() => props.onProjection(p)}>{p === "gnomonic" ? "flat" : p}</button>)}

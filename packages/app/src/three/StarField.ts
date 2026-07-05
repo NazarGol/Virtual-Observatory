@@ -10,7 +10,18 @@ export interface StarPoint {
   dir: Vec3;
   mag: number;
   bp_rp: number;
+  /** distance from the observer, parsecs (Distance sensor). */
+  dist?: number;
+  /** proper-motion rate at this vantage, mas/yr (Proper-motion sensor). */
+  pm?: number;
 }
+
+/** Instrument sensors. Each is a transform from the SAME real catalog fields
+ *  (magnitude, colour bp_rp, parallax distance, proper motion) to on-screen
+ *  luminance + colour — no fabricated data, just a different response curve. */
+export type Sensor = "visible" | "thermal" | "proper_motion" | "distance" | "photometric";
+export const SENSORS: Sensor[] = ["visible", "thermal", "proper_motion", "distance", "photometric"];
+const SENSOR_CODE: Record<Sensor, number> = { visible: 0, thermal: 1, proper_motion: 2, distance: 3, photometric: 4 };
 
 export interface BodyMarker {
   dir: Vec3;
@@ -93,6 +104,8 @@ export class StarField {
   private labelGroup = new THREE.Group();
   private sunGroup = new THREE.Group();
   private bodyGroup = new THREE.Group();
+  private groundGroup = new THREE.Group(); // dome ground + twilight (B8)
+  private sensor: Sensor = "visible";
   private ringTex = ringTexture();
   private sunTex = sunTexture();
   private discTex = discTexture();
@@ -139,7 +152,7 @@ export class StarField {
     this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
     this.orthoCam.position.set(0, 0, 1);
     this.orthoCam.lookAt(0, 0, 0);
-    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup, this.groundGroup);
 
     // faint celestial-equator ring for orientation (gnomonic only)
     const eq = new THREE.BufferGeometry().setFromPoints(
@@ -210,6 +223,7 @@ export class StarField {
     this.setSelection(this.rawSel);
     this.layoutSun();
     this.layoutBodies();
+    this.layoutGround();
   }
 
   setProjection(mode: "gnomonic" | "fisheye" | "dome"): void {
@@ -269,11 +283,13 @@ export class StarField {
     this.rawStars = stars;
     const N = stars.length;
     const tnt = new Float32Array(N * 3), mag = new Float32Array(N), dir = new Float32Array(N * 3);
+    const bprp = new Float32Array(N), dst = new Float32Array(N), pm = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const s = stars[i];
       const c = tint(s.bp_rp);
       tnt[i * 3] = c[0]; tnt[i * 3 + 1] = c[1]; tnt[i * 3 + 2] = c[2];
       mag[i] = s.mag;
+      bprp[i] = s.bp_rp ?? 0.6; dst[i] = s.dist ?? 10; pm[i] = s.pm ?? 0;
       dir[i * 3] = s.dir[0]; dir[i * 3 + 1] = s.dir[1]; dir[i * 3 + 2] = s.dir[2];
     }
     if (!this.geom) {
@@ -283,22 +299,52 @@ export class StarField {
         uniforms: {
           uDpr: { value: this.dpr }, uExposure: { value: this.exposure }, uZero: { value: MAG_ZERO_DEFAULT },
           uSunDir: { value: new THREE.Vector3(1, 0, 0) }, uSunCos: { value: 2 }, uSunOn: { value: 0 },
+          uSensor: { value: SENSOR_CODE[this.sensor] },
+          uPmRef: { value: 180.0 },        // mas/yr that reads as full-scale on the PM sensor
+          uDistNear: { value: 0.0 }, uDistFar: { value: 8.5 }, // log2(pc) ramp ends for Distance
         },
         vertexShader: `
           attribute vec3 tint; attribute float mag; attribute float vis; attribute vec3 dir;
+          attribute float bprp; attribute float dist; attribute float pmr;
           uniform float uDpr, uExposure, uZero;
           uniform vec3 uSunDir; uniform float uSunCos, uSunOn;
+          uniform int uSensor; uniform float uPmRef, uDistNear, uDistFar;
           varying vec3 vC; varying float vBloom;
+          // temperature false-colour from Gaia colour (blue-white hot -> deep red cool)
+          vec3 thermalPalette(float c){
+            float t = clamp((c + 0.3) / 3.3, 0.0, 1.0);
+            vec3 hot = vec3(0.74, 0.85, 1.0), mid = vec3(1.0, 0.95, 0.74), cool = vec3(1.0, 0.40, 0.22);
+            return t < 0.5 ? mix(hot, mid, t * 2.0) : mix(mid, cool, (t - 0.5) * 2.0);
+          }
           void main(){
             float flux = pow(2.512, (uZero + uExposure) - mag);   // relative flux (huge range)
-            float lum = flux / (flux + 1.0);                       // Reinhard tone-map -> [0,1)
-            // host-star glare: stars within the glare radius of an up sun wash out
+            float reinh = flux / (flux + 1.0);                     // Reinhard tone-map -> [0,1)
             float wash = uSunOn * smoothstep(uSunCos - 0.06, uSunCos + 0.02, dot(dir, uSunDir));
-            lum *= (1.0 - 0.98 * wash);
+            float lum; vec3 col; float sizeBoost = 1.0;
+            if (uSensor == 1) {                 // THERMAL / IR: cool stars brighten, temp colour
+              float ir = pow(2.512, 0.85 * clamp(bprp, -0.3, 3.0));
+              float f = flux * ir; lum = (f / (f + 1.0)) * (1.0 - 0.55 * wash);
+              col = thermalPalette(bprp) * clamp(lum * 1.2, 0.05, 1.0);
+            } else if (uSensor == 2) {          // PROPER MOTION: colour+size by drift rate
+              lum = reinh * (1.0 - 0.5 * wash);
+              float pf = pow(clamp(pmr / uPmRef, 0.0, 1.0), 0.5);
+              col = mix(vec3(0.15, 0.19, 0.29), vec3(1.0, 0.42, 0.92), pf) * clamp(0.28 + lum, 0.12, 1.0);
+              sizeBoost = 1.0 + 2.4 * pf;
+            } else if (uSensor == 3) {          // DISTANCE: near warm, far cool
+              lum = reinh * (1.0 - 0.5 * wash);
+              float df = clamp((log2(dist + 1.0) - uDistNear) / (uDistFar - uDistNear), 0.0, 1.0);
+              col = mix(vec3(1.0, 0.55, 0.34), vec3(0.38, 0.60, 1.0), df) * clamp(0.30 + lum, 0.14, 1.0);
+            } else if (uSensor == 4) {          // PHOTOMETRIC: linear-in-magnitude, neutral
+              lum = clamp(((uZero + uExposure) - mag) / 8.0 + 0.5, 0.0, 1.0) * (1.0 - 0.5 * wash);
+              col = vec3(0.70, 0.86, 0.80) * clamp(lum, 0.05, 1.0);
+            } else {                            // VISIBLE: perceptual, true colour (default)
+              lum = reinh * (1.0 - 0.98 * wash);
+              col = tint * clamp(lum * 1.15, 0.045, 1.0);
+            }
             vBloom = smoothstep(0.86, 1.0, lum);
-            vC = tint * clamp(lum * 1.15, 0.045, 1.0);             // floor keeps faint stars visible
+            vC = col;
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = (1.4 + 2.4 * lum + 3.4 * vBloom) * uDpr * vis; // vis=0 hides off-view points
+            gl_PointSize = (1.4 + 2.4 * lum + 3.4 * vBloom) * sizeBoost * uDpr * vis; // vis=0 hides off-view
           }`,
         fragmentShader: `
           varying vec3 vC; varying float vBloom;
@@ -317,8 +363,19 @@ export class StarField {
     this.geom.setAttribute("tint", new THREE.BufferAttribute(tnt, 3));
     this.geom.setAttribute("mag", new THREE.BufferAttribute(mag, 1));
     this.geom.setAttribute("dir", new THREE.BufferAttribute(dir, 3));
+    this.geom.setAttribute("bprp", new THREE.BufferAttribute(bprp, 1));
+    this.geom.setAttribute("dist", new THREE.BufferAttribute(dst, 1));
+    this.geom.setAttribute("pmr", new THREE.BufferAttribute(pm, 1));
     this.layoutStars();
   }
+
+  /** Switch instrument sensor (response curve). Positions are unchanged; only the
+   *  per-star luminance/colour transform in the shader changes. */
+  setSensor(sensor: Sensor): void {
+    this.sensor = sensor;
+    if (this.starMat) this.starMat.uniforms.uSensor!.value = SENSOR_CODE[sensor];
+  }
+  getSensor(): Sensor { return this.sensor; }
 
   /** Host-star glare: wash out stars within radiusDeg of the sun when it is up (dir set). */
   setSun(dirIcrs: Vec3 | null, radiusDeg: number): void {
@@ -332,6 +389,7 @@ export class StarField {
       }
     }
     this.layoutSun();
+    this.layoutGround();
   }
 
   private layoutSun(): void {
@@ -343,6 +401,49 @@ export class StarField {
     sp.position.set(p[0], p[1], p[2]);
     sp.scale.setScalar(this.mode === "gnomonic" ? 26 : 20);
     this.sunGroup.add(sp);
+  }
+
+  /** Dome ground (B8): the terrain beyond the horizon, a horizon line, and a warm twilight
+   *  glow at the host star's azimuth when it sits near the horizon. Dome projection only —
+   *  it grounds the all-sky view as "standing on a world" rather than a floating star chart. */
+  private layoutGround(): void {
+    this.groundGroup.clear();
+    if (this.mode !== "dome") { this.groundGroup.visible = false; return; }
+    this.groundGroup.visible = true;
+    // terrain: a warm-charcoal annulus filling the below-horizon corners
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(R * 1.002, R * 2.8, 120),
+      new THREE.MeshBasicMaterial({ color: 0x15110b, transparent: true, opacity: 0.94, depthWrite: false, side: THREE.DoubleSide }));
+    ring.position.set(0, 0, -0.5); ring.renderOrder = -1;
+    this.groundGroup.add(ring);
+    // the horizon line itself
+    const hz = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(Array.from({ length: 129 }, (_, i) => {
+        const a = (i / 128) * Math.PI * 2; return new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, 0);
+      })),
+      new THREE.LineBasicMaterial({ color: 0x4a4336 }));
+    hz.renderOrder = 0;
+    this.groundGroup.add(hz);
+    // twilight glow at the sun's azimuth, strongest as it crosses the horizon
+    if (this.rawSunDir) {
+      const s = this.rawSunDir;
+      const up = s[0] * this.enuU[0] + s[1] * this.enuU[1] + s[2] * this.enuU[2];
+      const altDeg = Math.asin(Math.max(-1, Math.min(1, up))) * R2D;
+      const ss = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+      const tw = ss(-18, -2, altDeg) * (1 - ss(6, 14, altDeg));
+      if (tw > 0.01) {
+        const east = s[0] * this.enuE[0] + s[1] * this.enuE[1] + s[2] * this.enuE[2];
+        const north = s[0] * this.enuN[0] + s[1] * this.enuN[1] + s[2] * this.enuN[2];
+        const az = Math.atan2(east, north);
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: this.sunTex, color: 0xffab5c, transparent: true, depthWrite: false,
+          blending: THREE.AdditiveBlending, opacity: 0.55 * tw }));
+        glow.position.set(Math.sin(az) * R, Math.cos(az) * R, 0.2);
+        glow.center.set(0.5, 0.32); // bias the glow up into the sky, not the ground
+        glow.scale.setScalar(95);
+        this.groundGroup.add(glow);
+      }
+    }
   }
 
   /** Host star, moons, sibling planets -- drawn in every projection at their correct angular
