@@ -20,6 +20,7 @@ type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry, milkyWayBand } from "./milkyway";
+import { comovingCandidates, anomalyCandidates, alignmentCandidates, type Candidate } from "./analysis";
 import { geodesicArc, SENSORS, type StarPoint, type Sensor } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1", survey: "vobs.survey.v1" };
@@ -73,6 +74,10 @@ const MEASURE_TOOLS: Tool[] = ["angular_distance", "separation_position_angle", 
 const SENSOR_LABEL: Record<Sensor, string> = {
   visible: "Visible", thermal: "Thermal", proper_motion: "Motion", distance: "Distance", photometric: "Photom.",
 };
+// Epoch comparator spans (B5): ghost drift tracks of the fastest movers over the span.
+const EPOCHS: { label: string; y: number }[] = [
+  { label: "off", y: 0 }, { label: "10 kyr", y: 1e4 }, { label: "100 kyr", y: 1e5 }, { label: "1 Myr", y: 1e6 },
+];
 const SENSOR_LEGEND: Record<Sensor, { cap: string; ramp?: string; ticks?: [string, string] }> = {
   visible: { cap: "Perceptual channel — true star colour (Gaia BP−RP), tone-mapped brightness." },
   thermal: { cap: "Temperature false-colour; cool stars (M dwarfs) brighten in the IR band. Derived from BP−RP.",
@@ -118,6 +123,10 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(PLAY_RATES[1]!.yps); // 1 day/s
   const [inertial, setInertial] = useState<InertialStar[]>([]);
+  const [inertialEpoch, setInertialEpoch] = useState(0); // sim time the inertial sky was last computed at
+  const [epochDelta, setEpochDelta] = useState(0);        // B5 comparator span (0 = off)
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candScanned, setCandScanned] = useState(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [draft, setDraft] = useState<string[]>([]);
@@ -176,7 +185,7 @@ export function App() {
     // recompute the star field when time has moved far enough to matter. The apparatus +
     // bodies (memos below) update every frame regardless.
     const recomputed = sessionInfo.session.ensureInertial(tYears);
-    if (recomputed) setInertial([...sessionInfo.session.inertial]);
+    if (recomputed) { setInertial([...sessionInfo.session.inertial]); setInertialEpoch(tYears); }
   }, [sessionInfo, tYears]);
 
   // play mode: advance sim time by `rate` years per real second (rAF-driven).
@@ -278,6 +287,33 @@ export function App() {
   const starPoints: StarPoint[] = useMemo(
     () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp, dist: s.distance_pc, pm: pmById.get(s.id) ?? 0 })),
     [inertial, pmById]);
+
+  // Epoch comparator (B5): ghost tracks from each fast mover's current position to where it
+  // drifts over the chosen span. Capped to the fastest movers so it stays legible + cheap.
+  const driftPaths = useMemo(() => {
+    if (!epochDelta || !sky || !sessionInfo) return [] as { pts: Vec3[]; color: number }[];
+    const obs = sessionInfo.observer;
+    const movers = inertial.filter((s) => (pmById.get(s.id) ?? 0) > 15)
+      .sort((a, b) => (pmById.get(b.id) ?? 0) - (pmById.get(a.id) ?? 0)).slice(0, 1500);
+    const out: { pts: Vec3[]; color: number }[] = [];
+    for (const s of movers) {
+      const d1 = directionAt(sky, obs, s.id, inertialEpoch + epochDelta);
+      if (d1) out.push({ pts: [s.direction_icrs, d1], color: 0x6f8496 });
+    }
+    return out;
+  }, [epochDelta, sky, sessionInfo, inertial, inertialEpoch, pmById]);
+
+  // B3: propose candidate regularities from what is currently in view. Human triggers it.
+  const findCandidates = () => {
+    if (!sky) return;
+    const vis = new Set(inertial.map((s) => s.id));
+    setCandidates([
+      ...comovingCandidates(sky.catalog.stars, vis),
+      ...alignmentCandidates(inertial),
+      ...anomalyCandidates(inertial, pmById),
+    ]);
+    setCandScanned(true);
+  };
 
   const resolver: ObjectResolver = useCallback(
     (id, t) => (sky && sessionInfo ? directionAt(sky, sessionInfo.observer, id, t) : null), [sky, sessionInfo]);
@@ -413,7 +449,7 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={trailPaths} sensor={sensor}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]} sensor={sensor}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
@@ -433,6 +469,9 @@ export function App() {
         <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG} />
         <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
           onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => setTYears(t)} />
+        <AnalysisPanel candidates={candidates} scanned={candScanned} onScan={findCandidates}
+          epochDelta={epochDelta} onEpoch={setEpochDelta}
+          onSelect={(ids) => { setSelection(ids); setTool("select"); }} />
         <Measurements results={results} metaById={metaById}
           onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
         <Annotations annotations={annotations} figures={figures}
@@ -720,6 +759,47 @@ function ArrivalCard(props: { clock: WorldClock; hostLabel: string; distPc: numb
       <div className="row"><span className="k">moons</span><span className="v">{w.moons.length}</span></div>
       <div className="muted" style={{ marginTop: 9, fontSize: 11, lineHeight: 1.45 }}>
         The sky below is this world's — the real catalog, relocated to its host.{wc.locked ? " Its star never sets." : ""}
+      </div>
+    </div>
+  );
+}
+
+/** Analysis (B3 + B5): the epoch comparator (ghost drift over a span) and candidate
+ *  regularities (co-moving groups, alignments, anomalies). Everything here is a proposal —
+ *  the human selects, confirms, names, records. Compute never authors a finished pattern. */
+function AnalysisPanel(props: {
+  candidates: Candidate[]; scanned: boolean; onScan: () => void;
+  epochDelta: number; onEpoch: (y: number) => void; onSelect: (ids: string[]) => void;
+}) {
+  return (
+    <div className="panel">
+      <h2>Analysis</h2>
+      <div className="muted">epoch drift</div>
+      <div className="seg" style={{ display: "flex", marginTop: 4 }}>
+        {EPOCHS.map((e) => (
+          <button key={e.label} style={{ flex: 1 }} className={props.epochDelta === e.y ? "active" : ""}
+            onClick={() => props.onEpoch(e.y)}>{e.label}</button>
+        ))}
+      </div>
+      <div className="faint" style={{ marginTop: 4, fontSize: 10.5 }}>ghost tracks — where the fastest movers drift over the span.</div>
+      <hr className="hair" />
+      <button onClick={props.onScan} title="propose candidate regularities from what is in view">◇ propose candidates</button>
+      {props.scanned && props.candidates.length === 0 && <div className="muted" style={{ marginTop: 8 }}>no candidates in this field</div>}
+      {props.candidates.length > 0 && (
+        <div className="mlist" style={{ marginTop: 8 }}>
+          {props.candidates.map((c) => (
+            <div key={c.key} className="mitem">
+              <div className="top">
+                <button className="link" onClick={() => props.onSelect(c.objectIds)}>{c.label}</button>
+                <span className="faint" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>{c.kind}</span>
+              </div>
+              <div className="ids">{c.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="faint" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4 }}>
+        candidates only — compute proposes, you dispose. Select to inspect; record what you confirm.
       </div>
     </div>
   );
