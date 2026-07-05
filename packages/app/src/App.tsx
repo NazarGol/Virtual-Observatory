@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   resolveMeasurement, serializeMeasurements, parseMeasurements,
   serializeAnnotations, parseAnnotations, resolveFigure, resolveLabel,
@@ -93,6 +93,22 @@ function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
   try { const s = localStorage.getItem(key); return s ? parse(s) : fallback; } catch { return fallback; }
 }
 
+/** Collapsible rail section (minimal UI): a header line + body shown only when open.
+ *  The title is its own element so it stays queryable and clicking it toggles the section. */
+function Section(props: { title: string; meta?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(props.defaultOpen ?? false);
+  return (
+    <div className={"sec" + (open ? " on" : "")}>
+      <div className="sechead" onClick={() => setOpen((o) => !o)}>
+        <span className="caret">{open ? "▾" : "▸"}</span>
+        <span className="t">{props.title}</span>
+        {props.meta != null && <span className="meta">{props.meta}</span>}
+      </div>
+      {open && <div className="secbody">{props.children}</div>}
+    </div>
+  );
+}
+
 /** Small in-app text editor used everywhere a native prompt used to be (prompts are
  *  suppressed in embedded browsers like VS Code's Simple Browser). */
 function InlineForm(props: { placeholder: string; initial?: string; multiline?: boolean; onSubmit: (v: string) => void; onCancel: () => void }) {
@@ -140,6 +156,7 @@ export function App() {
   const [sensor, setSensor] = useState<Sensor>("visible");
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
+  const [ctlOpen, setCtlOpen] = useState(true);
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
   const [notebook, setNotebook] = useState<Notebook>(() => loadJSON(KEY.note, parseNotebook, emptyNotebook()));
@@ -470,40 +487,60 @@ export function App() {
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
 
+      <div className="controls">
+        <div className="cbar" onClick={() => setCtlOpen((o) => !o)}>
+          <span className="t">Instrument</span><span className="caret">{ctlOpen ? "▾ hide" : "▸ controls"}</span>
+        </div>
+        {ctlOpen && (
+          <Toolbar tool={tool} onTool={onTool} vantage={vantage}
+            setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
+            worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
+            fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
+            showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
+            bodyTrails={bodyTrails} onBodyTrails={() => setBodyTrails((v) => !v)} observing={!!worldVantage}
+            sensor={sensor} onSensor={setSensor}
+            projection={projection} onProjection={setProjection}
+            selection={selection} draft={draft}
+            onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
+            pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
+        )}
+      </div>
+
       <aside className="side">
-        <Toolbar tool={tool} onTool={onTool} vantage={vantage}
-          setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
-          worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
-          fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
-          showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
-          bodyTrails={bodyTrails} onBodyTrails={() => setBodyTrails((v) => !v)} observing={!!worldVantage}
-          sensor={sensor} onSensor={setSensor}
-          projection={projection} onProjection={setProjection}
-          selection={selection} draft={draft}
-          onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
-          pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
         <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG}
           pm={focusId ? pmById.get(focusId) : undefined} />
-        <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
-          onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => setTYears(t)} />
-        <AnalysisPanel candidates={candidates} scanned={candScanned} onScan={findCandidates}
-          anchorId={selection.length === 1 ? selection[0]! : null}
-          anchorName={selection.length === 1 ? metaById.get(selection[0]!)?.name || selection[0]! : null}
-          onProposeFrom={findFromStar}
-          epochDelta={epochDelta} onEpoch={setEpochDelta}
-          onSelect={(ids) => { setSelection(ids); setTool("select"); }} />
-        <Measurements results={results} metaById={metaById}
-          onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
-        <Annotations annotations={annotations} figures={figures}
-          onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
-          onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
-        <SurveyPanel entries={survey} focusName={focusName} sensor={sensor} onRecord={recordSurvey}
-          onJump={(t, id) => { setTYears(t); setSelection([id]); setTool("select"); }}
-          onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
-        <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
-          onJump={(t, ids) => { setTYears(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
-          onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
-          onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
+        <Section title="Analysis" meta={candidates.length || null} defaultOpen>
+          <AnalysisPanel candidates={candidates} scanned={candScanned} onScan={findCandidates}
+            anchorId={selection.length === 1 ? selection[0]! : null}
+            anchorName={selection.length === 1 ? metaById.get(selection[0]!)?.name || selection[0]! : null}
+            onProposeFrom={findFromStar}
+            epochDelta={epochDelta} onEpoch={setEpochDelta}
+            onSelect={(ids) => { setSelection(ids); setTool("select"); }} />
+        </Section>
+        <Section title="Event scanner" meta={worldVantage ? scan?.events.length ?? "" : "world only"}>
+          <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
+            onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => setTYears(t)} />
+        </Section>
+        <Section title="Measurements" meta={results.length || null}>
+          <Measurements results={results} metaById={metaById}
+            onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
+        </Section>
+        <Section title="Annotations" meta={annotations.length || null}>
+          <Annotations annotations={annotations} figures={figures}
+            onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
+            onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
+        </Section>
+        <Section title="Survey log" meta={survey.length || null}>
+          <SurveyPanel entries={survey} focusName={focusName} sensor={sensor} onRecord={recordSurvey}
+            onJump={(t, id) => { setTYears(t); setSelection([id]); setTool("select"); }}
+            onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
+        </Section>
+        <Section title="Notebook" meta={(notebook.markers.length + notebook.notes.length) || null}>
+          <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
+            onJump={(t, ids) => { setTYears(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
+            onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
+            onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
+        </Section>
       </aside>
 
       <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} speculative={speculative}
@@ -526,8 +563,7 @@ function Toolbar(props: {
 }) {
   const [naming, setNaming] = useState<null | "figure" | "group">(null);
   return (
-    <div className="panel">
-      <h2>Instrument</h2>
+    <div className="ctl">
       <div className="row"><span className="k">vantage</span>
         <span className="btns">
           <button className={!props.worldVantageLabel && props.vantage === "alpha-cen" ? "active" : ""} onClick={() => props.setVantage("alpha-cen")}>Alpha Cen</button>
@@ -639,8 +675,8 @@ function fmtH(e: number, now: number) { const h = hoursFromNow(e, now); return `
 function Measurements(props: { results: MeasurementResult[]; metaById: Map<string, InertialStar>; onDelete: (id: string) => void; onClear: () => void }) {
   const name = (id: string) => props.metaById.get(id)?.name || id;
   return (
-    <div className="panel">
-      <h2>Measurements {props.results.length > 0 && <button className="x" onClick={props.onClear}>clear</button>}</h2>
+    <>
+      {props.results.length > 0 && <div style={{ marginBottom: 6 }}><button className="x" onClick={props.onClear}>clear all</button></div>}
       {props.results.length === 0 && <div className="muted">pick a measure tool, click two stars</div>}
       <div className="mlist">
         {props.results.map((r) => (
@@ -650,7 +686,7 @@ function Measurements(props: { results: MeasurementResult[]; metaById: Map<strin
           </div>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 function measureValue(r: MeasurementResult): string {
@@ -663,10 +699,9 @@ function measureValue(r: MeasurementResult): string {
 function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure[]; onRename: (id: string, name: string) => void; onDelete: (id: string) => void }) {
   const figState = new Map(props.figures.map((f) => [f.id, f]));
   const [editing, setEditing] = useState<string | null>(null);
-  if (props.annotations.length === 0) return <div className="panel"><h2>Annotations</h2><div className="muted">draw figures, pin labels, group stars</div></div>;
+  if (props.annotations.length === 0) return <div className="muted">draw figures, pin labels, group stars</div>;
   return (
-    <div className="panel">
-      <h2>Annotations</h2>
+    <>
       <div className="mlist">
         {props.annotations.map((a) => {
           const broken = a.kind === "figure" && figState.get(a.id)?.ok === false;
@@ -691,7 +726,7 @@ function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure
           );
         })}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -703,8 +738,7 @@ function NotebookPanel(props: {
   const name = (id: string) => props.metaById.get(id)?.name || id;
   const [adding, setAdding] = useState<null | "note" | "marker">(null);
   return (
-    <div className="panel">
-      <h2>Notebook</h2>
+    <>
       <div className="btns"><button onClick={() => setAdding("note")}>+ note</button><button onClick={() => setAdding("marker")}>+ time marker</button></div>
       {adding === "note" && <InlineForm placeholder="observation / note" multiline onSubmit={(t) => { props.onAddNote(t); setAdding(null); }} onCancel={() => setAdding(null)} />}
       {adding === "marker" && <InlineForm placeholder="marker label" onSubmit={(l) => { props.onAddMarker(l); setAdding(null); }} onCancel={() => setAdding(null)} />}
@@ -729,7 +763,7 @@ function NotebookPanel(props: {
           </div>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -797,8 +831,7 @@ function AnalysisPanel(props: {
   epochDelta: number; onEpoch: (y: number) => void; onSelect: (ids: string[]) => void;
 }) {
   return (
-    <div className="panel">
-      <h2>Analysis</h2>
+    <>
       <div className="muted">epoch drift</div>
       <div className="seg" style={{ display: "flex", marginTop: 4 }}>
         {EPOCHS.map((e) => (
@@ -831,7 +864,7 @@ function AnalysisPanel(props: {
       <div className="faint" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4 }}>
         candidates only — compute proposes, you dispose. Select to inspect; record what you confirm.
       </div>
-    </div>
+    </>
   );
 }
 
@@ -841,13 +874,12 @@ function EventScanner(props: {
   scan: Scan | null; worldClock: WorldClock | null; observing: boolean;
   onScan: (span: number) => void; onJump: (t: number) => void;
 }) {
-  if (!props.observing) return <div className="panel"><h2>Event scanner</h2><div className="muted">observe a world to scan its sky</div></div>;
+  if (!props.observing) return <div className="muted">observe a world to scan its sky</div>;
   const yr = props.worldClock?.orbitYears ?? 1;
   const daySpan = props.worldClock && !props.worldClock.locked ? props.worldClock.rotDays / 365.25 : yr;
   const KIND: Record<SkyEvent["kind"], string> = { day: "day/night", conj: "conjunction", eclipse: "eclipse" };
   return (
-    <div className="panel">
-      <h2>Event scanner</h2>
+    <>
       <div className="btns">
         <button onClick={() => props.onScan(daySpan)} title="rise/set/transit + approaches over the next local day">scan next day</button>
         <button onClick={() => props.onScan(yr)} title="approaches over the next local year">next year</button>
@@ -866,7 +898,7 @@ function EventScanner(props: {
             ))}
           </div>)}
       <div className="faint" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4 }}>candidates — computed rise/set &amp; closest approaches; confirm by eye.</div>
-    </div>
+    </>
   );
 }
 
@@ -876,8 +908,7 @@ function SurveyPanel(props: {
   onRecord: () => void; onJump: (t: number, id: string) => void; onDelete: (id: string) => void;
 }) {
   return (
-    <div className="panel">
-      <h2>Survey log {props.entries.length > 0 && <span className="faint">{props.entries.length}</span>}</h2>
+    <>
       {props.focusName
         ? <button onClick={props.onRecord} title="add the focused object to the survey log">+ record “{props.focusName}” · {SENSOR_LABEL[props.sensor]}</button>
         : <div className="muted">hover or select an object to record it</div>}
@@ -894,6 +925,6 @@ function SurveyPanel(props: {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -119,7 +119,29 @@ input[type=range] { accent-color: var(--accent); }
 
 /* ---- overlay chips (top corners of the viewport) ---- */
 .viewtoggle { position: absolute; top: 12px; right: 342px; z-index: 6; }
-.arrival { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; }
+.arrival { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9; }
+
+/* ---- on-canvas instrument controls (collapsible), keeps the rail data-only ---- */
+.controls { position: absolute; top: 12px; left: 14px; z-index: 8; width: 300px; max-width: calc(100% - 28px);
+  background: rgba(12,13,17,.86); backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  border: 1px solid var(--line); border-radius: 3px; }
+.controls .cbar { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; cursor: pointer; user-select: none; }
+.controls .cbar:hover { background: rgba(95,179,196,.05); }
+.controls .cbar .t { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.controls .cbar .caret { color: var(--faint); font-size: 11px; }
+.ctl { padding: 2px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
+.ctl .row { padding: 1px 0; }
+
+/* ---- collapsible rail sections ---- */
+.sec { border-bottom: 1px solid var(--line-soft); }
+.sec > .sechead { display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+  padding: 10px 14px; user-select: none; }
+.sec > .sechead:hover { background: rgba(95,179,196,.05); }
+.sec > .sechead .t { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.sec > .sechead .caret { color: var(--faint); margin-right: 7px; font-size: 10px; }
+.sec > .sechead .meta { color: var(--faint); font-size: 11px; margin-left: auto; padding-left: 8px; }
+.sec > .secbody { padding: 0 14px 12px; }
+.sec.on > .sechead .t { color: var(--ink-dim); }
 
 /* ---- gallery ---- */
 .gallery { height: 100%; display: flex; flex-direction: column; background: var(--ground); }

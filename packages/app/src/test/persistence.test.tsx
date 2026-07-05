@@ -40,10 +40,11 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Phase 3 UI persistence", () => {
+  // The rail panels are collapsible sections now; expand the one under test first.
   it("a note is created from the button and survives a reload", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    await screen.findByText("Notebook");
+    await user.click(await screen.findByText("Notebook")); // expand section
 
     await user.click(screen.getByText("+ note"));
     await user.type(await screen.findByPlaceholderText("observation / note"), "Barnard crosses the meridian");
@@ -54,14 +55,14 @@ describe("Phase 3 UI persistence", () => {
 
     unmount(); // simulate a reload
     render(<App />);
-    await screen.findByText("Notebook");
+    await user.click(await screen.findByText("Notebook"));
     expect(await screen.findByText(/Barnard crosses the meridian/)).toBeTruthy();
   });
 
   it("a time marker is created from the button and survives a reload", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    await screen.findByText("Notebook");
+    await user.click(await screen.findByText("Notebook"));
 
     await user.click(screen.getByText("+ time marker"));
     await user.type(await screen.findByPlaceholderText("marker label"), "epoch zero");
@@ -72,21 +73,24 @@ describe("Phase 3 UI persistence", () => {
 
     unmount();
     render(<App />);
-    await screen.findByText("Notebook");
+    await user.click(await screen.findByText("Notebook"));
     expect(await screen.findByText(/epoch zero/)).toBeTruthy();
   });
 
   it("a figure persists across reload and reconnects its star IDs", async () => {
+    const user = userEvent.setup();
     localStorage.setItem("vobs.annotations.v1", serializeAnnotations([
       { id: "f1", kind: "figure", name: "Test line", nodeIds: ["A", "B"], edges: [[0, 1]], constellation: true, createdAtYears: 0 },
     ]));
     render(<App />);
+    await user.click(await screen.findByText("Annotations")); // expand section
     // appears in the annotations panel, fully resolved (not flagged "missing")
     expect(await screen.findByText("Test line")).toBeTruthy();
     expect(screen.queryByText(/some stars missing/)).toBeNull();
 
     cleanup(); // reload
     render(<App />);
+    await user.click(await screen.findByText("Annotations"));
     expect(await screen.findByText("Test line")).toBeTruthy();
   });
 });
