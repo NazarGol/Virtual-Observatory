@@ -19,7 +19,7 @@ import {
 type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
-import { milkyWayGeometry } from "./milkyway";
+import { milkyWayGeometry, milkyWayBand } from "./milkyway";
 import { geodesicArc, type StarPoint } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
@@ -27,8 +27,26 @@ const R2D = 180 / Math.PI;
 const uid = () => crypto.randomUUID();
 const raOf = (d: Vec3) => ((Math.atan2(d[1], d[0]) * R2D) + 360) % 360;
 const decOf = (d: Vec3) => Math.asin(Math.max(-1, Math.min(1, d[2]))) * R2D;
-const fmtT = (y: number) => `${y.toLocaleString(undefined, { maximumFractionDigits: 0 })} yr`;
-const hoursFromNow = (e: number, now: number) => ((e - now) * SECONDS_PER_JULIAN_YEAR) / 3600;
+const SPY = SECONDS_PER_JULIAN_YEAR;
+const fmtT = (y: number) => {
+  const ay = Math.abs(y);
+  if (ay < 86400 / SPY) { const h = (y * SPY) / 3600; return Math.abs(h) < 1 ? `${(h * 60).toFixed(1)} min` : `${h.toFixed(2)} h`; }
+  if (ay < (60 * 86400) / SPY) return `${(y * 365.25).toFixed(2)} d`;
+  return `${y.toLocaleString(undefined, { maximumFractionDigits: ay < 100 ? 2 : 0 })} yr`;
+};
+const hoursFromNow = (e: number, now: number) => ((e - now) * SPY) / 3600;
+
+// Time scales (years) sec -> millennia, and play rates (years per real second).
+const TIME_SCALES: { label: string; years: number }[] = [
+  { label: "±1 min", years: 60 / SPY }, { label: "±1 hr", years: 3600 / SPY },
+  { label: "±1 day", years: 86400 / SPY }, { label: "±30 days", years: (30 * 86400) / SPY },
+  { label: "±1 yr", years: 1 }, { label: "±100 yr", years: 100 }, { label: "±10 kyr", years: 1e4 },
+  { label: "±100 kyr", years: 1e5 }, { label: "±1 Myr", years: 1e6 }, { label: "±10 Myr", years: 1e7 },
+];
+const PLAY_RATES: { label: string; yps: number }[] = [
+  { label: "1 hr/s", yps: 3600 / SPY }, { label: "1 day/s", yps: 86400 / SPY },
+  { label: "1 mo/s", yps: (30 * 86400) / SPY }, { label: "1 yr/s", yps: 1 }, { label: "100 yr/s", yps: 100 },
+];
 
 type Tool = "select" | "angular_distance" | "separation_position_angle" | "alignment" | "figure" | "label";
 const TOOL_LABEL: Record<Tool, string> = {
@@ -66,7 +84,9 @@ export function App() {
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
   const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World } | null>(null);
   const [tYears, setTYears] = useState(0);
-  const [scale, setScale] = useState(100000);
+  const [scale, setScale] = useState(86400 / SPY); // ±1 day default -- a living sky
+  const [playing, setPlaying] = useState(false);
+  const [rate, setRate] = useState(PLAY_RATES[1]!.yps); // 1 day/s
   const [inertial, setInertial] = useState<InertialStar[]>([]);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
@@ -102,21 +122,41 @@ export function App() {
       : { east: [0, 1, 0] as Vec3, north: [0, 0, 1] as Vec3, up: [1, 0, 0] as Vec3 }),
     [apparatus, tYears],
   );
-  // host-star glare: when observing from a world, the sun washes out nearby stars if it is up.
+  // All bodies of the observed world (host star, moons, siblings), updated every frame.
+  const allBodies = useMemo(() => (worldVantage ? worldBodies(worldVantage.world, tYears) : []), [worldVantage, tYears]);
+  const bodyMarkers = useMemo(
+    () => allBodies.map((b) => ({ dir: b.direction_icrs as Vec3, name: b.name, kind: b.kind, diamDeg: b.angularDiameterDeg })),
+    [allBodies],
+  );
+  // host-star glare: the sun (host star) washes out nearby stars when it is above the horizon.
   const sun = useMemo(() => {
-    if (!worldVantage) return null;
-    const host = worldBodies(worldVantage.world, tYears).find((b) => b.kind === "host_star");
-    if (!host) return null;
-    const d = host.direction_icrs;
-    const altDeg = Math.asin(Math.max(-1, Math.min(1, d[0] * horizonBasis.up[0] + d[1] * horizonBasis.up[1] + d[2] * horizonBasis.up[2]))) * R2D;
-    return { dir: d as Vec3, altDeg };
-  }, [worldVantage, tYears, horizonBasis]);
+    const host = allBodies.find((b) => b.kind === "host_star");
+    return host ? { dir: host.direction_icrs as Vec3, altDeg: host.horizontal.altDeg } : null;
+  }, [allBodies]);
   const GLARE_DEG = 14;
+  // Milky Way band point cloud, oriented by the vantage (recomputed on relocation).
+  const mwPoints = useMemo(() => (showMilkyWay ? milkyWayBand(mw) : []), [mw, showMilkyWay]);
   useEffect(() => {
     if (!sessionInfo) return;
-    sessionInfo.session.recomputeInertial(tYears);
-    setInertial([...sessionInfo.session.inertial]);
+    // Freeze Stage-1 (proper motion) when scrubbing/playing at sub-year scales -- only
+    // recompute the star field when time has moved far enough to matter. The apparatus +
+    // bodies (memos below) update every frame regardless.
+    const recomputed = sessionInfo.session.ensureInertial(tYears);
+    if (recomputed) setInertial([...sessionInfo.session.inertial]);
   }, [sessionInfo, tYears]);
+
+  // play mode: advance sim time by `rate` years per real second (rAF-driven).
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0, last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000); last = now;
+      setTYears((t) => t + rate * dt);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, rate]);
 
   useEffect(() => { localStorage.setItem(KEY.meas, serializeMeasurements(measurements)); }, [measurements]);
   useEffect(() => { localStorage.setItem(KEY.annot, serializeAnnotations(annotations)); }, [annotations]);
@@ -241,7 +281,7 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
-        milkyWay={{ normalIcrs: mw.diskNormalIcrs, centerIcrs: mw.galacticCenterIcrs, gain: showMilkyWay ? 1 : 0 }}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
@@ -268,7 +308,8 @@ export function App() {
           onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
       </aside>
 
-      <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} speculative={speculative} />
+      <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} speculative={speculative}
+        playing={playing} onPlay={() => setPlaying((p) => !p)} rate={rate} setRate={setRate} />
     </div>
   );
 }
@@ -298,7 +339,10 @@ function Toolbar(props: {
           <span className="v">{props.worldVantageLabel} <button className="x" onClick={props.onClearWorldVantage} title="back to Sol/Alpha Cen">×</button></span>
         </div>
       )}
-      <div className="row" style={{ marginTop: 6 }}><span className="k">FOV {props.fov.toFixed(1)}°</span>
+      <div className="row" style={{ marginTop: 6 }}>
+        <span className="k">{props.projection === "gnomonic" ? `FOV ${props.fov.toFixed(1)}°`
+          : props.projection === "fisheye" ? `fisheye · ${(60 / props.fov).toFixed(1)}×`
+          : `dome (all-sky) · ${(60 / props.fov).toFixed(1)}×`}</span>
         <span className="btns"><button onClick={() => props.nudgeFov(1 / 1.4)}>zoom +</button><button onClick={() => props.nudgeFov(1.4)}>zoom −</button></span>
       </div>
       <div className="row" style={{ marginTop: 6 }}><span className="k">exposure {props.exposure >= 0 ? "+" : ""}{props.exposure.toFixed(1)}</span>
@@ -465,15 +509,21 @@ function NotebookPanel(props: {
   );
 }
 
-function TimeBar(props: { t: number; scale: number; setScale: (s: number) => void; setT: (t: number) => void; starCount: number; speculative: boolean }) {
+function TimeBar(props: {
+  t: number; scale: number; setScale: (s: number) => void; setT: (t: number) => void; starCount: number; speculative: boolean;
+  playing: boolean; onPlay: () => void; rate: number; setRate: (r: number) => void;
+}) {
   return (
     <div className="timebar">
-      <span className={"clock" + (props.speculative ? " spec" : "")}>t = {fmtT(props.t)}{props.speculative && " ⚠"}</span>
-      <input type="range" min={-1000} max={1000} step={1} value={(props.t / props.scale) * 1000}
+      <button className={props.playing ? "active" : ""} onClick={props.onPlay} title="play / pause">{props.playing ? "❚❚" : "▶"}</button>
+      <select value={props.rate} onChange={(e) => props.setRate(Number(e.target.value))} title="play rate">
+        {PLAY_RATES.map((r) => <option key={r.label} value={r.yps}>{r.label}</option>)}
+      </select>
+      <span className={"clock" + (props.speculative ? " spec" : "")}>t = {fmtT(props.t)}{props.speculative ? " ⚠" : ""}</span>
+      <input type="range" min={-1000} max={1000} step={0.5} value={Math.max(-1000, Math.min(1000, (props.t / props.scale) * 1000))}
         onChange={(e) => props.setT((Number(e.target.value) / 1000) * props.scale)} />
       <select value={props.scale} onChange={(e) => props.setScale(Number(e.target.value))}>
-        <option value={100}>±100 yr</option><option value={10000}>±10 kyr</option><option value={100000}>±100 kyr</option>
-        <option value={1000000}>±1 Myr</option><option value={10000000}>±10 Myr</option>
+        {TIME_SCALES.map((s) => <option key={s.label} value={s.years}>{s.label}</option>)}
       </select>
       <button onClick={() => props.setT(0)}>now</button>
       <span className="muted">{props.starCount} stars</span>

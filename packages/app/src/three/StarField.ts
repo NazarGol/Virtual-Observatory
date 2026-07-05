@@ -12,6 +12,14 @@ export interface StarPoint {
   bp_rp: number;
 }
 
+export interface BodyMarker {
+  dir: Vec3;
+  name: string;
+  kind: string;
+  /** apparent angular diameter, degrees (a point below resolvability) */
+  diamDeg: number;
+}
+
 const R = 100;
 const R2D = 180 / Math.PI;
 const tint = (bp: number): [number, number, number] => {
@@ -49,6 +57,20 @@ function sunTexture(): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
+function discTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.62, "rgba(255,255,255,0.95)");
+  grad.addColorStop(0.82, "rgba(255,255,255,0.35)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(32, 32, 32, 0, Math.PI * 2); g.fill();
+  return new THREE.CanvasTexture(c);
+}
+
 export class StarField {
   onHover?: (index: number | null) => void;
   onPick?: (index: number | null) => void;
@@ -62,17 +84,20 @@ export class StarField {
   private geom?: THREE.BufferGeometry;
   private starMat?: THREE.ShaderMaterial;
   private exposure = 0;
-  private mwMesh?: THREE.Mesh;
-  private mwMat?: THREE.ShaderMaterial;
-  private mwGain = 0;
+  private mwPoints?: THREE.Points;
+  private mwGeom?: THREE.BufferGeometry;
+  private rawMw: { dir: Vec3; brightness: number }[] = [];
   private selGroup = new THREE.Group();
   private overlayGroup = new THREE.Group();
   private figureGroup = new THREE.Group();
   private labelGroup = new THREE.Group();
   private sunGroup = new THREE.Group();
+  private bodyGroup = new THREE.Group();
   private ringTex = ringTexture();
   private sunTex = sunTexture();
+  private discTex = discTexture();
   private rawSunDir: Vec3 | null = null;
+  private rawBodies: BodyMarker[] = [];
 
   private yaw = 0;
   private pitch = 0;
@@ -114,7 +139,7 @@ export class StarField {
     this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
     this.orthoCam.position.set(0, 0, 1);
     this.orthoCam.lookAt(0, 0, 0);
-    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup);
 
     // faint celestial-equator ring for orientation (gnomonic only)
     const eq = new THREE.BufferGeometry().setFromPoints(
@@ -178,17 +203,18 @@ export class StarField {
   /** Reposition all geometry under the active projection (for fisheye/dome pans + data). */
   private relayout(): void {
     if (this.geom) this.layoutStars();
+    this.layoutMilkyWay();
     this.setOverlays(this.rawOverlays);
     this.setFigures(this.rawFigures);
     this.setLabels(this.rawLabels);
     this.setSelection(this.rawSel);
     this.layoutSun();
+    this.layoutBodies();
   }
 
   setProjection(mode: "gnomonic" | "fisheye" | "dome"): void {
     this.mode = mode;
     if (this.eqLine) this.eqLine.visible = mode === "gnomonic";
-    if (this.mwMesh) this.mwMesh.visible = mode === "gnomonic" && this.mwGain > 0;
     this.updateViewBasis();
     this.updateOrtho();
     this.relayout();
@@ -319,6 +345,32 @@ export class StarField {
     this.sunGroup.add(sp);
   }
 
+  /** Host star, moons, sibling planets -- drawn in every projection at their correct angular
+   *  size (a point below resolvability), each labelled. */
+  setBodies(bodies: BodyMarker[]): void {
+    this.rawBodies = bodies;
+    this.layoutBodies();
+  }
+
+  private layoutBodies(): void {
+    this.bodyGroup.clear();
+    for (const b of this.rawBodies) {
+      const p = this.projectScene(b.dir);
+      if (!p) continue;
+      const theta = (b.diamDeg * Math.PI) / 180; // angular diameter, radians
+      const perRad = this.mode === "gnomonic" ? R : this.mode === "fisheye" ? R / this.fisheyeMax : R / (Math.PI / 2);
+      const size = Math.max(1.3, Math.min(45, theta * perRad)); // floor = a visible point
+      const color = b.kind === "host_star" ? 0xffe08a : b.kind === "moon" ? 0xd6dbe2 : 0x9fc0ff;
+      const disc = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.discTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      disc.position.set(p[0], p[1], p[2]);
+      disc.scale.setScalar(size);
+      this.bodyGroup.add(disc);
+      const lab = makeTextSprite(b.name, b.kind === "host_star" ? "#ffe08a" : "#c8d2e0");
+      lab.position.set(p[0], p[1], p[2]);
+      this.bodyGroup.add(lab);
+    }
+  }
+
   private layoutStars(): void {
     if (!this.geom) return;
     const N = this.rawStars.length;
@@ -340,33 +392,45 @@ export class StarField {
   }
   getExposure(): number { return this.exposure; }
 
-  /** Vantage-dependent Milky Way band: diffuse glow along the disk plane (perpendicular to
-   *  normalIcrs), brightest toward centerIcrs. gain=0 hides it. */
-  setMilkyWay(normalIcrs: Vec3, centerIcrs: Vec3, gain: number): void {
-    if (!this.mwMesh) {
-      this.mwMat = new THREE.ShaderMaterial({
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide,
-        uniforms: { uNormal: { value: new THREE.Vector3() }, uCenter: { value: new THREE.Vector3() }, uGain: { value: 0 } },
-        vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-        fragmentShader: `varying vec3 vDir; uniform vec3 uNormal; uniform vec3 uCenter; uniform float uGain;
-          void main(){ vec3 d = normalize(vDir);
-            float lat = asin(clamp(dot(d, uNormal), -1.0, 1.0));       // angle from the disk plane
-            float band = exp(-pow(lat / 0.16, 2.0));                   // Gaussian, ~9 deg half-width
-            float toward = 0.30 + 0.70 * max(0.0, dot(d, uCenter));    // brighter toward galactic center
-            float b = band * toward * uGain;
-            gl_FragColor = vec4(vec3(0.55, 0.58, 0.72) * b, b); }`,
+  /** Milky Way as a structured point cloud (directions + brightness). Projected like stars,
+   *  so it renders in every projection and moves with the vantage. Empty array hides it. */
+  setMilkyWayPoints(pts: { dir: Vec3; brightness: number }[]): void {
+    this.rawMw = pts;
+    if (!this.mwPoints) {
+      this.mwGeom = new THREE.BufferGeometry();
+      const mat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: { uDpr: { value: this.dpr } },
+        vertexShader: `attribute float b; varying float vB; uniform float uDpr;
+          void main(){ vB = b; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = 2.4 * uDpr; }`,
+        fragmentShader: `varying float vB; void main(){ vec2 d = gl_PointCoord - vec2(0.5);
+          if (length(d) > 0.5) discard;
+          gl_FragColor = vec4(vec3(0.40, 0.44, 0.58) * vB, 0.5 * vB); }`,
       });
-      this.mwMesh = new THREE.Mesh(new THREE.SphereGeometry(300, 48, 32), this.mwMat);
-      this.mwMesh.renderOrder = -1;
-      this.mwMesh.frustumCulled = false;
-      this.scene.add(this.mwMesh);
+      this.mwPoints = new THREE.Points(this.mwGeom, mat);
+      this.mwPoints.frustumCulled = false;
+      this.mwPoints.renderOrder = -2;
+      this.scene.add(this.mwPoints);
     }
-    this.mwMat!.uniforms.uNormal!.value.set(normalIcrs[0], normalIcrs[1], normalIcrs[2]);
-    this.mwMat!.uniforms.uCenter!.value.set(centerIcrs[0], centerIcrs[1], centerIcrs[2]);
-    this.mwMat!.uniforms.uGain!.value = gain;
-    this.mwGain = gain;
-    this.mwMesh!.visible = gain > 0 && this.mode === "gnomonic"; // the 3D band only aligns in gnomonic
+    const bb = new Float32Array(pts.length);
+    for (let i = 0; i < pts.length; i++) bb[i] = pts[i]!.brightness;
+    this.mwGeom!.setAttribute("b", new THREE.BufferAttribute(bb, 1));
+    this.mwPoints!.visible = pts.length > 0;
+    this.layoutMilkyWay();
+  }
+
+  private layoutMilkyWay(): void {
+    if (!this.mwGeom) return;
+    const N = this.rawMw.length;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const p = this.projectScene(this.rawMw[i]!.dir);
+      if (p) { pos[i * 3] = p[0]; pos[i * 3 + 1] = p[1]; pos[i * 3 + 2] = p[2]; }
+      else pos[i * 3] = 1e6;
+    }
+    this.mwGeom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    this.mwGeom.attributes.position.needsUpdate = true;
   }
 
   setSelection(dirs: Vec3[]): void {

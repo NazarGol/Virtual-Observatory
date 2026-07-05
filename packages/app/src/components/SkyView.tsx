@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Vec3 } from "@vobs/engine";
-import { StarField, type StarPoint } from "../three/StarField";
+import { StarField, type StarPoint, type BodyMarker } from "../three/StarField";
 
 interface Props {
   stars: StarPoint[];
@@ -13,7 +13,8 @@ interface Props {
   onFov: (fov: number) => void;
   fovRef: (setFov: (f: number) => void) => void;
   exposureRef: (setExposure: (v: number) => void) => void;
-  milkyWay: { normalIcrs: Vec3; centerIcrs: Vec3; gain: number };
+  milkyWayPoints: { dir: Vec3; brightness: number }[];
+  bodies: BodyMarker[];
   projection: "gnomonic" | "fisheye" | "dome";
   horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };
   sun: { dirIcrs: Vec3 | null; radiusDeg: number };
@@ -43,8 +44,8 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setOverlays(props.overlays); }, [props.overlays]);
   useEffect(() => { fieldRef.current?.setFigures(props.figures); }, [props.figures]);
   useEffect(() => { fieldRef.current?.setLabels(props.labels); }, [props.labels]);
-  useEffect(() => { fieldRef.current?.setMilkyWay(props.milkyWay.normalIcrs, props.milkyWay.centerIcrs, props.milkyWay.gain); },
-    [props.milkyWay]);
+  useEffect(() => { fieldRef.current?.setMilkyWayPoints(props.milkyWayPoints); }, [props.milkyWayPoints]);
+  useEffect(() => { fieldRef.current?.setBodies(props.bodies); }, [props.bodies]);
   useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
     [props.horizonBasis]);
   useEffect(() => { fieldRef.current?.setProjection(props.projection); }, [props.projection]);

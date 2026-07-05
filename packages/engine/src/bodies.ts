@@ -22,6 +22,9 @@ export const MEARTH_PER_MSUN = 332946.0; // Earth masses in one solar mass
 const J2000_JD = 2451545.0;
 const DAYS_PER_JULIAN_YEAR = 365.25;
 const D2R = Math.PI / 180;
+const RSUN_AU = 0.00465047; // solar radius in AU
+const KM_PER_AU = 1.495978707e8;
+const angDiamDeg = (radiusAu: number, distAu: number) => 2 * Math.atan(radiusAu / distAu) * (180 / Math.PI);
 
 /** Solve Kepler's equation M = E - e*sin(E) for the eccentric anomaly E (radians). */
 export function solveKepler(M: number, e: number): number {
@@ -83,6 +86,8 @@ export interface ApparentBody {
   direction_icrs: Vec3;
   /** Distance from the observing planet, in AU. */
   distance_au: number;
+  /** Apparent angular diameter (degrees), from the body's physical radius and its distance. */
+  angularDiameterDeg: number;
   horizontal: HorizontalCoord;
 }
 
@@ -118,6 +123,7 @@ export function worldBodies(world: World, tYears: number): ApparentBody[] {
       kind: "host_star",
       direction_icrs: dir,
       distance_au: dist,
+      angularDiameterDeg: angDiamDeg(world.host_star.radius_rsun * RSUN_AU, dist),
       horizontal: toHorizon(dir),
     });
   }
@@ -131,13 +137,14 @@ export function worldBodies(world: World, tYears: number): ApparentBody[] {
       kind: "moon",
       direction_icrs: dir,
       distance_au: dist,
+      angularDiameterDeg: angDiamDeg(moon.radius_km / KM_PER_AU, dist),
       horizontal: toHorizon(dir),
     });
   }
 
   // Sibling planets (optional; absent from the Sol world). They orbit the host, so their
   // direction from our planet is their heliocentric position minus the planet's.
-  const siblings = (world as World & { siblings?: { name: string; orbit: KeplerElements }[] })
+  const siblings = (world as World & { siblings?: { name: string; orbit: KeplerElements; radius_km?: number }[] })
     .siblings;
   for (const sib of siblings ?? []) {
     const s = keplerPosition(sib.orbit, hostMass, tYears);
@@ -147,6 +154,7 @@ export function worldBodies(world: World, tYears: number): ApparentBody[] {
       kind: "sibling_planet",
       direction_icrs: dir,
       distance_au: dist,
+      angularDiameterDeg: angDiamDeg((sib.radius_km ?? 6371) / KM_PER_AU, dist),
       horizontal: toHorizon(dir),
     });
   }
