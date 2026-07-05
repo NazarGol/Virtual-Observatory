@@ -79,14 +79,14 @@ const EPOCHS: { label: string; y: number }[] = [
   { label: "off", y: 0 }, { label: "10 kyr", y: 1e4 }, { label: "100 kyr", y: 1e5 }, { label: "1 Myr", y: 1e6 },
 ];
 const SENSOR_LEGEND: Record<Sensor, { cap: string; ramp?: string; ticks?: [string, string] }> = {
-  visible: { cap: "Perceptual channel — true star colour (Gaia BP−RP), tone-mapped brightness." },
-  thermal: { cap: "Temperature false-colour; cool stars (M dwarfs) brighten in the IR band. Derived from BP−RP.",
+  visible: { cap: "Perceptual channel — true star colour (Gaia BP−RP), Reinhard tone-mapped brightness." },
+  thermal: { cap: "Thermal / IR — brightness = blackbody K-band (2.2 µm) flux from each star's Teff; cool stars outshine hot ones. Colour by temperature.",
     ramp: "linear-gradient(90deg,#bcd8ff,#fff1bd,#ff6a38)", ticks: ["hot", "cool"] },
-  proper_motion: { cap: "Hue & size by angular drift rate at this vantage (mas/yr). Real astrometry, computed here.",
+  proper_motion: { cap: "Proper motion — angular drift rate (mas/yr), which changes with the vantage; recomputed for this relocation.",
     ramp: "linear-gradient(90deg,#273149,#ff6bec)", ticks: ["slow", "fast"] },
-  distance: { cap: "False-colour by parallax distance from the observer. Real Gaia distances.",
+  distance: { cap: "Distance — observer-relative parallax distance after relocation (real Gaia distances).",
     ramp: "linear-gradient(90deg,#ff8c57,#6199ff)", ticks: ["near", "far"] },
-  photometric: { cap: "Linear response in magnitude, neutral tint — reads flux honestly for measurement." },
+  photometric: { cap: "Photometric — linear detector: response ∝ true flux, no perceptual compression. Bright stars saturate, faint fall away (real dynamic range)." },
 };
 
 function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
