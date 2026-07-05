@@ -22,7 +22,7 @@ const TYPE_COLOR: Record<string, string> = {
 };
 const DAY = 86400, YEAR = 3.15576e7;
 
-export function Gallery(props: { onBack: () => void; onObserve: (pos: [number, number, number], label: string) => void }) {
+export function Gallery(props: { onBack: () => void; onObserve: (world: LoadedWorld) => void }) {
   const [byType, setByType] = useState<Map<string, LoadedWorld[]> | null>(null);
   const [order, setOrder] = useState<string[]>([]);
   const [slots, setSlots] = useState<{ type: string; index: number; pinned: boolean }[]>([]);
@@ -75,7 +75,7 @@ export function Gallery(props: { onBack: () => void; onObserve: (pos: [number, n
   );
 }
 
-function WorldCard(props: { world: LoadedWorld; poolSize: number; pinned: boolean; onPin: () => void; onReroll: () => void; onObserve: (pos: [number, number, number], label: string) => void }) {
+function WorldCard(props: { world: LoadedWorld; poolSize: number; pinned: boolean; onPin: () => void; onReroll: () => void; onObserve: (world: LoadedWorld) => void }) {
   const w = props.world;
   const [showProv, setShowProv] = useState(false);
   const checks = w.validation?.checks ?? [];
@@ -86,7 +86,7 @@ function WorldCard(props: { world: LoadedWorld; poolSize: number; pinned: boolea
       <div className="chead">
         <span className="badge" style={{ background: TYPE_COLOR[w.world_type] ?? "#889" }}>{w.world_type.replace(/_/g, " ")}</span>
         <span className="cbtns">
-          <button onClick={() => props.onObserve(w.host_star.galactic_xyz_pc, w.host_star.catalog_id)} title="observe the sky from this world's vantage">🔭</button>
+          <button onClick={() => props.onObserve(w)} title="observe the sky from this world's vantage">🔭</button>
           <button className={props.pinned ? "active" : ""} onClick={props.onPin} title="pin">📌</button>
           <button onClick={props.onReroll} disabled={props.pinned} title={`reroll (1 of ${props.poolSize})`}>🎲</button>
         </span>

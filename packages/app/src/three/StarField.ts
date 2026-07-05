@@ -35,6 +35,20 @@ function ringTexture(): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
+function sunTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,246,214,1)");
+  grad.addColorStop(0.18, "rgba(255,214,120,0.85)");
+  grad.addColorStop(0.5, "rgba(255,180,80,0.25)");
+  grad.addColorStop(1, "rgba(255,170,70,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
 export class StarField {
   onHover?: (index: number | null) => void;
   onPick?: (index: number | null) => void;
@@ -50,11 +64,15 @@ export class StarField {
   private exposure = 0;
   private mwMesh?: THREE.Mesh;
   private mwMat?: THREE.ShaderMaterial;
+  private mwGain = 0;
   private selGroup = new THREE.Group();
   private overlayGroup = new THREE.Group();
   private figureGroup = new THREE.Group();
   private labelGroup = new THREE.Group();
+  private sunGroup = new THREE.Group();
   private ringTex = ringTexture();
+  private sunTex = sunTexture();
+  private rawSunDir: Vec3 | null = null;
 
   private yaw = 0;
   private pitch = 0;
@@ -69,6 +87,21 @@ export class StarField {
   private raf = 0;
   private dpr: number;
 
+  // projection (Phase 5 item 2). gnomonic = the perspective path (unchanged); fisheye/dome
+  // reproject unit directions into a 2D disc rendered by an orthographic camera.
+  private mode: "gnomonic" | "fisheye" | "dome" = "gnomonic";
+  private orthoCam!: THREE.OrthographicCamera;
+  private ortho2DZoom = 1;
+  private eqLine?: THREE.LineLoop;
+  private Lv: Vec3 = [1, 0, 0]; private Rv: Vec3 = [0, 0, -1]; private Uv: Vec3 = [0, 1, 0];
+  private enuE: Vec3 = [0, 1, 0]; private enuN: Vec3 = [0, 0, 1]; private enuU: Vec3 = [1, 0, 0];
+  private fisheyeMax = 2.55; // radians shown from the view centre (~146 deg)
+  private rawStars: StarPoint[] = [];
+  private rawOverlays: Vec3[][] = [];
+  private rawFigures: Vec3[][] = [];
+  private rawLabels: { dir: Vec3; text: string }[] = [];
+  private rawSel: Vec3[] = [];
+
   constructor(container: HTMLElement) {
     this.container = container;
     this.dpr = Math.min(devicePixelRatio, 2);
@@ -78,20 +111,95 @@ export class StarField {
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(this.fov, container.clientWidth / container.clientHeight, 0.1, 1000);
-    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup);
+    this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
+    this.orthoCam.position.set(0, 0, 1);
+    this.orthoCam.lookAt(0, 0, 0);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup);
 
-    // faint celestial-equator ring for orientation
+    // faint celestial-equator ring for orientation (gnomonic only)
     const eq = new THREE.BufferGeometry().setFromPoints(
       Array.from({ length: 161 }, (_, i) => {
         const a = (i / 160) * Math.PI * 2;
         return new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, 0);
       }),
     );
-    this.scene.add(new THREE.LineLoop(eq, new THREE.LineBasicMaterial({ color: 0x12233a })));
+    this.eqLine = new THREE.LineLoop(eq, new THREE.LineBasicMaterial({ color: 0x12233a }));
+    this.scene.add(this.eqLine);
 
+    this.updateOrtho();
     this.applyLook();
     this.bind();
     this.loop();
+  }
+
+  private activeCam(): THREE.Camera { return this.mode === "gnomonic" ? this.camera : this.orthoCam; }
+
+  private updateOrtho(): void {
+    const aspect = this.container.clientWidth / this.container.clientHeight || 1;
+    const half = (1.15 * R) / this.ortho2DZoom;
+    this.orthoCam.left = -half * aspect; this.orthoCam.right = half * aspect;
+    this.orthoCam.top = half; this.orthoCam.bottom = -half;
+    this.orthoCam.updateProjectionMatrix();
+  }
+
+  private updateViewBasis(): void {
+    const cp = Math.cos(this.pitch);
+    const L: Vec3 = [Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp];
+    let rx = L[2], ry = 0, rz = -L[0]; // cross(L, worldUp=[0,1,0]) -> right
+    const rn = Math.hypot(rx, ry, rz) || 1e-9; rx /= rn; ry /= rn; rz /= rn;
+    const R2: Vec3 = [rx, ry, rz];
+    const U2: Vec3 = [R2[1] * L[2] - R2[2] * L[1], R2[2] * L[0] - R2[0] * L[2], R2[0] * L[1] - R2[1] * L[0]]; // cross(right, L)
+    this.Lv = L; this.Rv = R2; this.Uv = U2;
+  }
+
+  /** Scene-space position of a unit direction under the active projection (null = off-view). */
+  private projectScene(d: Vec3): [number, number, number] | null {
+    if (this.mode === "gnomonic") return [d[0] * R, d[1] * R, d[2] * R];
+    if (this.mode === "fisheye") {
+      const fwd = d[0] * this.Lv[0] + d[1] * this.Lv[1] + d[2] * this.Lv[2];
+      const theta = Math.acos(Math.max(-1, Math.min(1, fwd)));
+      if (theta > this.fisheyeMax) return null;
+      const rx = d[0] * this.Rv[0] + d[1] * this.Rv[1] + d[2] * this.Rv[2];
+      const ry = d[0] * this.Uv[0] + d[1] * this.Uv[1] + d[2] * this.Uv[2];
+      const rn = Math.hypot(rx, ry) || 1e-9;
+      const rr = theta / this.fisheyeMax; // equidistant
+      return [(rx / rn) * rr * R, (ry / rn) * rr * R, 0];
+    }
+    // dome: alt/az, zenith at centre, horizon at the edge circle
+    const alt = Math.asin(Math.max(-1, Math.min(1, d[0] * this.enuU[0] + d[1] * this.enuU[1] + d[2] * this.enuU[2])));
+    if (alt < -0.02) return null;
+    const east = d[0] * this.enuE[0] + d[1] * this.enuE[1] + d[2] * this.enuE[2];
+    const north = d[0] * this.enuN[0] + d[1] * this.enuN[1] + d[2] * this.enuN[2];
+    const az = Math.atan2(east, north);
+    const rr = 1 - alt / (Math.PI / 2);
+    return [Math.sin(az) * rr * R, Math.cos(az) * rr * R, 0];
+  }
+
+  /** Reposition all geometry under the active projection (for fisheye/dome pans + data). */
+  private relayout(): void {
+    if (this.geom) this.layoutStars();
+    this.setOverlays(this.rawOverlays);
+    this.setFigures(this.rawFigures);
+    this.setLabels(this.rawLabels);
+    this.setSelection(this.rawSel);
+    this.layoutSun();
+  }
+
+  setProjection(mode: "gnomonic" | "fisheye" | "dome"): void {
+    this.mode = mode;
+    if (this.eqLine) this.eqLine.visible = mode === "gnomonic";
+    if (this.mwMesh) this.mwMesh.visible = mode === "gnomonic" && this.mwGain > 0;
+    this.updateViewBasis();
+    this.updateOrtho();
+    this.relayout();
+    this.onView?.(this.fov);
+  }
+  getProjection(): "gnomonic" | "fisheye" | "dome" { return this.mode; }
+
+  /** East/North/Up (ICRS) for the dome projection; call on time/observer change. */
+  setHorizonBasis(east: Vec3, north: Vec3, up: Vec3): void {
+    this.enuE = east; this.enuN = north; this.enuU = up;
+    if (this.mode === "dome") this.relayout();
   }
 
   private bind(): void {
@@ -109,7 +217,10 @@ export class StarField {
       this.moved += Math.abs(dx) + Math.abs(dy);
       const k = (this.fov / 60) * 0.0026; // pan slower when zoomed in
       this.yaw -= dx * k; this.pitch += dy * k; this.px = e.clientX; this.py = e.clientY;
-      this.applyLook();
+      this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch));
+      if (this.mode === "gnomonic") this.applyLook();
+      else if (this.mode === "fisheye") { this.updateViewBasis(); this.relayout(); }
+      // dome is fixed to the local alt/az frame -- pan does not apply
     });
     el.addEventListener("wheel", (e) => { this.setFov(this.fov * (e.deltaY > 0 ? 1.1 : 1 / 1.1)); }, { passive: true });
   }
@@ -122,38 +233,46 @@ export class StarField {
 
   setFov(fovDeg: number): void {
     this.fov = Math.max(0.5, Math.min(120, fovDeg));
-    this.camera.fov = this.fov;
-    this.camera.updateProjectionMatrix();
+    if (this.mode === "gnomonic") { this.camera.fov = this.fov; this.camera.updateProjectionMatrix(); }
+    else { this.ortho2DZoom = 60 / this.fov; this.updateOrtho(); }
     this.onView?.(this.fov);
   }
   getFov(): number { return this.fov; }
 
   setStars(stars: StarPoint[]): void {
+    this.rawStars = stars;
     const N = stars.length;
-    const pos = new Float32Array(N * 3), tnt = new Float32Array(N * 3), mag = new Float32Array(N);
+    const tnt = new Float32Array(N * 3), mag = new Float32Array(N), dir = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
       const s = stars[i];
-      pos[i * 3] = s.dir[0] * R; pos[i * 3 + 1] = s.dir[1] * R; pos[i * 3 + 2] = s.dir[2] * R;
       const c = tint(s.bp_rp);
       tnt[i * 3] = c[0]; tnt[i * 3 + 1] = c[1]; tnt[i * 3 + 2] = c[2];
       mag[i] = s.mag;
+      dir[i * 3] = s.dir[0]; dir[i * 3 + 1] = s.dir[1]; dir[i * 3 + 2] = s.dir[2];
     }
     if (!this.geom) {
       this.geom = new THREE.BufferGeometry();
       this.starMat = new THREE.ShaderMaterial({
         transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        uniforms: { uDpr: { value: this.dpr }, uExposure: { value: this.exposure }, uZero: { value: MAG_ZERO_DEFAULT } },
+        uniforms: {
+          uDpr: { value: this.dpr }, uExposure: { value: this.exposure }, uZero: { value: MAG_ZERO_DEFAULT },
+          uSunDir: { value: new THREE.Vector3(1, 0, 0) }, uSunCos: { value: 2 }, uSunOn: { value: 0 },
+        },
         vertexShader: `
-          attribute vec3 tint; attribute float mag;
+          attribute vec3 tint; attribute float mag; attribute float vis; attribute vec3 dir;
           uniform float uDpr, uExposure, uZero;
+          uniform vec3 uSunDir; uniform float uSunCos, uSunOn;
           varying vec3 vC; varying float vBloom;
           void main(){
             float flux = pow(2.512, (uZero + uExposure) - mag);   // relative flux (huge range)
             float lum = flux / (flux + 1.0);                       // Reinhard tone-map -> [0,1)
+            // host-star glare: stars within the glare radius of an up sun wash out
+            float wash = uSunOn * smoothstep(uSunCos - 0.06, uSunCos + 0.02, dot(dir, uSunDir));
+            lum *= (1.0 - 0.98 * wash);
             vBloom = smoothstep(0.86, 1.0, lum);
             vC = tint * clamp(lum * 1.15, 0.045, 1.0);             // floor keeps faint stars visible
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = (1.4 + 2.4 * lum + 3.4 * vBloom) * uDpr; // floor + bloom on the brightest
+            gl_PointSize = (1.4 + 2.4 * lum + 3.4 * vBloom) * uDpr * vis; // vis=0 hides off-view points
           }`,
         fragmentShader: `
           varying vec3 vC; varying float vBloom;
@@ -169,9 +288,48 @@ export class StarField {
       this.points.frustumCulled = false;
       this.scene.add(this.points);
     }
-    this.geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     this.geom.setAttribute("tint", new THREE.BufferAttribute(tnt, 3));
     this.geom.setAttribute("mag", new THREE.BufferAttribute(mag, 1));
+    this.geom.setAttribute("dir", new THREE.BufferAttribute(dir, 3));
+    this.layoutStars();
+  }
+
+  /** Host-star glare: wash out stars within radiusDeg of the sun when it is up (dir set). */
+  setSun(dirIcrs: Vec3 | null, radiusDeg: number): void {
+    this.rawSunDir = dirIcrs;
+    if (this.starMat) {
+      this.starMat.uniforms.uSunOn!.value = dirIcrs ? 1 : 0;
+      if (dirIcrs) {
+        const n = Math.hypot(dirIcrs[0], dirIcrs[1], dirIcrs[2]) || 1;
+        this.starMat.uniforms.uSunDir!.value.set(dirIcrs[0] / n, dirIcrs[1] / n, dirIcrs[2] / n);
+        this.starMat.uniforms.uSunCos!.value = Math.cos((radiusDeg * Math.PI) / 180);
+      }
+    }
+    this.layoutSun();
+  }
+
+  private layoutSun(): void {
+    this.sunGroup.clear();
+    if (!this.rawSunDir) return;
+    const p = this.projectScene(this.rawSunDir);
+    if (!p) return;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sunTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    sp.position.set(p[0], p[1], p[2]);
+    sp.scale.setScalar(this.mode === "gnomonic" ? 26 : 20);
+    this.sunGroup.add(sp);
+  }
+
+  private layoutStars(): void {
+    if (!this.geom) return;
+    const N = this.rawStars.length;
+    const pos = new Float32Array(N * 3), vis = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const p = this.projectScene(this.rawStars[i]!.dir);
+      if (p) { pos[i * 3] = p[0]; pos[i * 3 + 1] = p[1]; pos[i * 3 + 2] = p[2]; vis[i] = 1; }
+      else { pos[i * 3] = 1e6; vis[i] = 0; }
+    }
+    this.geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    this.geom.setAttribute("vis", new THREE.BufferAttribute(vis, 1));
     this.geom.attributes.position.needsUpdate = true;
   }
 
@@ -207,60 +365,82 @@ export class StarField {
     this.mwMat!.uniforms.uNormal!.value.set(normalIcrs[0], normalIcrs[1], normalIcrs[2]);
     this.mwMat!.uniforms.uCenter!.value.set(centerIcrs[0], centerIcrs[1], centerIcrs[2]);
     this.mwMat!.uniforms.uGain!.value = gain;
-    this.mwMesh!.visible = gain > 0;
+    this.mwGain = gain;
+    this.mwMesh!.visible = gain > 0 && this.mode === "gnomonic"; // the 3D band only aligns in gnomonic
   }
 
   setSelection(dirs: Vec3[]): void {
+    this.rawSel = dirs;
     this.selGroup.clear();
     for (const d of dirs) {
+      const p = this.projectScene(d);
+      if (!p) continue;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringTex, transparent: true, depthWrite: false }));
-      sp.position.set(d[0] * R, d[1] * R, d[2] * R);
-      sp.scale.setScalar(6);
+      sp.position.set(p[0], p[1], p[2]);
+      sp.scale.setScalar(this.mode === "gnomonic" ? 6 : 5);
       this.selGroup.add(sp);
     }
   }
 
+  private projArc(arc: Vec3[]): THREE.Vector3[] | null {
+    const out: THREE.Vector3[] = [];
+    for (const d of arc) { const p = this.projectScene(d); if (!p) return null; out.push(new THREE.Vector3(p[0], p[1], p[2])); }
+    return out;
+  }
+
   /** Each overlay is a polyline of inertial unit directions (a geodesic arc). */
   setOverlays(arcs: Vec3[][]): void {
+    this.rawOverlays = arcs;
     this.overlayGroup.clear();
     for (const arc of arcs) {
-      const g = new THREE.BufferGeometry().setFromPoints(arc.map((d) => new THREE.Vector3(d[0] * R, d[1] * R, d[2] * R)));
-      this.overlayGroup.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x8fe3ff })));
+      const pts = this.projArc(arc);
+      if (pts) this.overlayGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x8fe3ff })));
     }
   }
 
   /** Annotation figure edges (constellations / sketches), drawn warm to distinguish them. */
   setFigures(arcs: Vec3[][]): void {
+    this.rawFigures = arcs;
     this.figureGroup.clear();
     for (const arc of arcs) {
-      const g = new THREE.BufferGeometry().setFromPoints(arc.map((d) => new THREE.Vector3(d[0] * R, d[1] * R, d[2] * R)));
-      this.figureGroup.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffcf6b })));
+      const pts = this.projArc(arc);
+      if (pts) this.figureGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffcf6b })));
     }
   }
 
   /** Text labels pinned to inertial directions (anchored to objects by the React layer). */
   setLabels(labels: { dir: Vec3; text: string }[]): void {
+    this.rawLabels = labels;
     this.labelGroup.clear();
-    for (const l of labels) this.labelGroup.add(makeTextSprite(l.text, l.dir));
+    for (const l of labels) {
+      const p = this.projectScene(l.dir);
+      if (!p) continue;
+      const sp = makeTextSprite(l.text);
+      sp.position.set(p[0], p[1], p[2]);
+      this.labelGroup.add(sp);
+    }
   }
 
   resize(): void {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    this.updateOrtho();
     this.renderer.setSize(w, h);
   }
 
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
+    const cam = this.activeCam();
     if (this.points) {
-      // tighter pick threshold when zoomed in (telescopic)
-      this.ray.params.Points!.threshold = (this.fov / 60) * 1.4;
-      this.ray.setFromCamera(this.mouse, this.camera);
+      this.ray.params.Points!.threshold = this.mode === "gnomonic"
+        ? (this.fov / 60) * 1.4
+        : ((1.15 * R) / this.ortho2DZoom) * 0.02; // world-unit threshold in the 2D ortho frame
+      this.ray.setFromCamera(this.mouse, cam);
       const hit = this.ray.intersectObject(this.points, false)[0];
       const idx = hit ? hit.index ?? null : null;
       if (idx !== this.hoverIndex) { this.hoverIndex = idx; this.onHover?.(idx); }
     }
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, cam);
   };
 
   dispose(): void {
@@ -270,8 +450,7 @@ export class StarField {
   }
 }
 
-const R_LABEL = 100;
-function makeTextSprite(text: string, dir: Vec3, color = "#ffe1a3"): THREE.Sprite {
+function makeTextSprite(text: string, color = "#ffe1a3"): THREE.Sprite {
   const font = 26, pad = 7;
   const meas = document.createElement("canvas").getContext("2d")!;
   meas.font = `${font}px ui-monospace, monospace`;
@@ -284,7 +463,6 @@ function makeTextSprite(text: string, dir: Vec3, color = "#ffe1a3"): THREE.Sprit
   g.shadowColor = "#000"; g.shadowBlur = 4;
   g.fillText(text, pad, c.height / 2);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
-  sp.position.set(dir[0] * R_LABEL, dir[1] * R_LABEL, dir[2] * R_LABEL);
   sp.center.set(-0.05, 0.5); // sit just to the right of the anchor
   sp.scale.set((c.width / c.height) * 3.4, 3.4, 1);
   return sp;

@@ -4,15 +4,19 @@ import {
   serializeAnnotations, parseAnnotations, resolveFigure, resolveLabel,
   serializeNotebook, parseNotebook, emptyNotebook,
   PROPAGATION_MODELS,
+  parseWorld, planetOrientation, worldObserver, worldBodies,
+  type World, type PlanetOrientation, type GeoObserver,
   type MeasurementDef, type MeasurementKind, type MeasurementResult,
   type Annotation, type FigureDef, type LabelDef, type GroupDef, type ResolvedFigure,
   type Notebook, type Note,
   type InertialStar, type Vec3, type ObjectResolver,
 } from "@vobs/engine";
 import {
-  loadSky, buildSession, buildSessionAt, directionAt, horizontalOf, riseSetOf,
+  loadSky, buildSession, buildSessionAt, directionAt, horizontalOf, riseSetOf, horizonBasisFor,
   SECONDS_PER_JULIAN_YEAR, type LoadedSky, type Vantage,
 } from "./sky";
+
+type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry } from "./milkyway";
@@ -60,7 +64,7 @@ export function App() {
   const [sky, setSky] = useState<LoadedSky | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
-  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string } | null>(null);
+  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World } | null>(null);
   const [tYears, setTYears] = useState(0);
   const [scale, setScale] = useState(100000);
   const [inertial, setInertial] = useState<InertialStar[]>([]);
@@ -72,6 +76,7 @@ export function App() {
   const [fov, setFov] = useState(60);
   const [exposure, setExposure] = useState(0);
   const [showMilkyWay, setShowMilkyWay] = useState(true);
+  const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
@@ -86,6 +91,27 @@ export function App() {
     [sky, vantage, worldVantage],
   );
   const mw = useMemo(() => milkyWayGeometry(sessionInfo ? sessionInfo.observer.origin_pc : [0, 0, 0]), [sessionInfo]);
+  // active apparatus: the observed world's planet when standing on one, else the Sol world.
+  const apparatus = useMemo(
+    () => (worldVantage ? { o: planetOrientation(worldVantage.world), obs: worldObserver(worldVantage.world) }
+      : sky ? { o: sky.orientation, obs: sky.geoObserver } : null),
+    [worldVantage, sky],
+  );
+  const horizonBasis = useMemo(
+    () => (apparatus ? horizonBasisFor(apparatus.o, apparatus.obs, tYears)
+      : { east: [0, 1, 0] as Vec3, north: [0, 0, 1] as Vec3, up: [1, 0, 0] as Vec3 }),
+    [apparatus, tYears],
+  );
+  // host-star glare: when observing from a world, the sun washes out nearby stars if it is up.
+  const sun = useMemo(() => {
+    if (!worldVantage) return null;
+    const host = worldBodies(worldVantage.world, tYears).find((b) => b.kind === "host_star");
+    if (!host) return null;
+    const d = host.direction_icrs;
+    const altDeg = Math.asin(Math.max(-1, Math.min(1, d[0] * horizonBasis.up[0] + d[1] * horizonBasis.up[1] + d[2] * horizonBasis.up[2]))) * R2D;
+    return { dir: d as Vec3, altDeg };
+  }, [worldVantage, tYears, horizonBasis]);
+  const GLARE_DEG = 14;
   useEffect(() => {
     if (!sessionInfo) return;
     sessionInfo.session.recomputeInertial(tYears);
@@ -188,7 +214,7 @@ export function App() {
   const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
 
   if (view === "gallery") return <Gallery onBack={() => setView("instrument")}
-    onObserve={(pos, label) => { setWorldVantage({ pos, label }); setView("instrument"); }} />;
+    onObserve={(w) => { setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w) }); setView("instrument"); }} />;
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
 
@@ -216,6 +242,8 @@ export function App() {
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
         milkyWay={{ normalIcrs: mw.diskNormalIcrs, centerIcrs: mw.galacticCenterIcrs, gain: showMilkyWay ? 1 : 0 }}
+        projection={projection} horizonBasis={horizonBasis}
+        sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
 
       <aside className="side">
@@ -224,10 +252,11 @@ export function App() {
           worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
           fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
           showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
+          projection={projection} onProjection={setProjection}
           selection={selection} draft={draft}
           onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
           pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
-        <Readout sky={sky} t={tYears} dir={focusDir} meta={focusMeta} />
+        <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG} />
         <Measurements results={results} metaById={metaById}
           onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
         <Annotations annotations={annotations} figures={figures}
@@ -249,6 +278,7 @@ function Toolbar(props: {
   worldVantageLabel: string | null; onClearWorldVantage: () => void;
   fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
   showMilkyWay: boolean; onMilkyWay: () => void;
+  projection: Projection; onProjection: (p: Projection) => void;
   selection: string[]; draft: string[];
   onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
   pendingLabelName: string | null; onSubmitLabel: (t: string) => void; onCancelLabel: () => void;
@@ -277,6 +307,12 @@ function Toolbar(props: {
       <div className="row" style={{ marginTop: 6 }}><span className="k">background</span>
         <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
       </div>
+      <div className="row" style={{ marginTop: 6 }}><span className="k">projection</span>
+        <span className="btns">
+          {(["gnomonic", "fisheye", "dome"] as Projection[]).map((p) =>
+            <button key={p} className={props.projection === p ? "active" : ""} onClick={() => props.onProjection(p)}>{p === "gnomonic" ? "flat" : p}</button>)}
+        </span>
+      </div>
       <div className="muted" style={{ marginTop: 8 }}>tools</div>
       <div className="btns" style={{ marginTop: 4 }}>
         {(["select", ...MEASURE_TOOLS, "figure", "label"] as Tool[]).map((t) =>
@@ -299,13 +335,19 @@ function Toolbar(props: {
   );
 }
 
-function Readout(props: { sky: LoadedSky; t: number; dir?: Vec3; meta?: InertialStar }) {
-  if (!props.dir || !props.meta) return <div className="panel"><h2>Readout</h2><div className="muted">hover or select a star</div></div>;
+function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; dir?: Vec3; meta?: InertialStar; sun: { dir: Vec3; altDeg: number } | null; glareDeg: number }) {
+  if (!props.dir || !props.meta || !props.o || !props.obs) return <div className="panel"><h2>Readout</h2><div className="muted">hover or select a star</div></div>;
   const d = props.dir, m = props.meta;
-  const h = horizontalOf(props.sky, d, props.t);
-  const rst = riseSetOf(props.sky, d, props.t);
+  const h = horizontalOf(props.o, props.obs, d, props.t);
+  const rst = riseSetOf(props.o, props.obs, d, props.t);
   const ev = rst.circumpolar ? "circumpolar" : rst.neverRises ? "never rises"
     : `rise ${fmtH(rst.riseYears!, props.t)}, set ${fmtH(rst.setYears!, props.t)}`;
+  let heliacal: { elong: number; washed: boolean; sunUp: boolean } | null = null;
+  if (props.sun) {
+    const s = props.sun.dir;
+    const elong = Math.acos(Math.max(-1, Math.min(1, d[0] * s[0] + d[1] * s[1] + d[2] * s[2]))) * R2D;
+    heliacal = { elong, sunUp: props.sun.altDeg > 0, washed: props.sun.altDeg > -2 && elong < props.glareDeg };
+  }
   return (
     <div className="panel">
       <h2>Readout</h2>
@@ -316,6 +358,11 @@ function Readout(props: { sky: LoadedSky; t: number; dir?: Vec3; meta?: Inertial
       <div className="row"><span className="k">distance</span><span className="v">{m.distance_pc.toFixed(2)} pc</span></div>
       <div className="row"><span className="k">transit alt</span><span className="v">{rst.transitAltitudeDeg.toFixed(1)}°</span></div>
       <div className="row"><span className="k">events</span><span className="v">{ev}</span></div>
+      {heliacal && (
+        <div className="row"><span className="k">sun elong.</span>
+          <span className="v">{heliacal.elong.toFixed(1)}°{heliacal.washed ? " · lost in glare" : heliacal.sunUp ? " · clear of the sun" : ""}</span>
+        </div>
+      )}
     </div>
   );
 }

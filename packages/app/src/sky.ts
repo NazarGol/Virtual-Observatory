@@ -9,6 +9,7 @@ import {
   planetOrientation,
   worldObserver,
   findRiseSetTransit,
+  horizontalBasisIcrs,
   type Catalog,
   type CatalogStar,
   type World,
@@ -76,12 +77,17 @@ export function directionAt(sky: LoadedSky, observer: Observer, id: string, t: n
   return r ? galacticToIcrs(r.direction_gal) : null;
 }
 
-export function horizontalOf(sky: LoadedSky, dir: Vec3, t: number): HorizontalCoord {
-  return inertialToHorizontal(dir, sky.orientation, sky.geoObserver, t);
+export function horizontalOf(o: PlanetOrientation, obs: GeoObserver, dir: Vec3, t: number): HorizontalCoord {
+  return inertialToHorizontal(dir, o, obs, t);
 }
 
-export function riseSetOf(sky: LoadedSky, dir: Vec3, t: number) {
-  return findRiseSetTransit(dir, sky.orientation, sky.geoObserver, t);
+export function riseSetOf(o: PlanetOrientation, obs: GeoObserver, dir: Vec3, t: number) {
+  return findRiseSetTransit(dir, o, obs, t);
+}
+
+/** East/North/Up (ICRS) for the horizon-dome projection at time t. */
+export function horizonBasisFor(o: PlanetOrientation, obs: GeoObserver, t: number) {
+  return horizontalBasisIcrs(o, obs, t);
 }
 
 export function bodiesAt(session: SkySession, t: number): ApparentBody[] {

@@ -127,6 +127,33 @@ export function makeHorizontalProjector(
 }
 
 /**
+ * The observer's local East/North/Up basis expressed in ICRS, at time t. A star's horizontal
+ * coords follow directly: alt = asin(dir . up), az = atan2(dir . east, dir . north). Used by
+ * the renderer's horizon-dome projection so it needs no per-star engine call.
+ */
+export function horizontalBasisIcrs(
+  o: PlanetOrientation,
+  obs: GeoObserver,
+  tYears: number,
+): { east: Vec3; north: Vec3; up: Vec3 } {
+  const { x: ex, y: ey, z: ez } = planetEquatorialBasis(o);
+  const ang = siderealAngleRad(o, tYears) + obs.lonDeg * D2R;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const phi = obs.latDeg * D2R, cphi = Math.cos(phi), sphi = Math.sin(phi);
+  // ENU in the planet-equatorial frame at (RA = ang, Dec = phi), then rotated to ICRS.
+  const toIcrs = (v: Vec3): Vec3 => [
+    ex[0] * v[0] + ey[0] * v[1] + ez[0] * v[2],
+    ex[1] * v[0] + ey[1] * v[1] + ez[1] * v[2],
+    ex[2] * v[0] + ey[2] * v[1] + ez[2] * v[2],
+  ];
+  return {
+    east: toIcrs([-s, c, 0]),
+    north: toIcrs([-sphi * c, -sphi * s, cphi]),
+    up: toIcrs([cphi * c, cphi * s, sphi]),
+  };
+}
+
+/**
  * Rotate a single inertial (ICRS) unit direction into the observer's local horizontal
  * frame. Convenience wrapper around {@link makeHorizontalProjector}; for many stars at one
  * time, build the projector once and reuse it.

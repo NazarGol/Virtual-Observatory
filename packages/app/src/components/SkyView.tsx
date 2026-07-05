@@ -14,6 +14,9 @@ interface Props {
   fovRef: (setFov: (f: number) => void) => void;
   exposureRef: (setExposure: (v: number) => void) => void;
   milkyWay: { normalIcrs: Vec3; centerIcrs: Vec3; gain: number };
+  projection: "gnomonic" | "fisheye" | "dome";
+  horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };
+  sun: { dirIcrs: Vec3 | null; radiusDeg: number };
 }
 
 export function SkyView(props: Props) {
@@ -42,6 +45,10 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setLabels(props.labels); }, [props.labels]);
   useEffect(() => { fieldRef.current?.setMilkyWay(props.milkyWay.normalIcrs, props.milkyWay.centerIcrs, props.milkyWay.gain); },
     [props.milkyWay]);
+  useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
+    [props.horizonBasis]);
+  useEffect(() => { fieldRef.current?.setProjection(props.projection); }, [props.projection]);
+  useEffect(() => { fieldRef.current?.setSun(props.sun.dirIcrs, props.sun.radiusDeg); }, [props.sun]);
 
   return <div className="sky" ref={mountRef} />;
 }

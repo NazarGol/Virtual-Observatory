@@ -8,10 +8,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   inertialToHorizontal,
+  horizontalBasisIcrs,
   raDecToVec,
   SECONDS_PER_JULIAN_YEAR,
   type PlanetOrientation,
 } from "../src/horizontal.js";
+import { dot } from "../src/vec.js";
 import { relocateStar } from "../src/relocate.js";
 import { galacticToIcrs } from "../src/frames.js";
 import { angularSepUnit, type Vec3 } from "../src/vec.js";
@@ -85,6 +87,22 @@ test("section 6 acceptance: rise/set azimuth matches the hand-computed value for
   assert.ok(Math.abs(rise.azDeg - A) < 1e-7, `rise az ${rise.azDeg} != hand value ${A}`);
   assert.ok(Math.abs(set.azDeg - (360 - A)) < 1e-7, `set az ${set.azDeg} != ${360 - A}`);
   console.log(`  [stage2] rise/set azimuth dec=${decDeg} lat=${latDeg}: A=${A.toFixed(4)} deg (matched)`);
+});
+
+test("horizontalBasisIcrs yields the same alt/az as inertialToHorizontal (for the dome projection)", () => {
+  const R2D = 180 / Math.PI;
+  const o: PlanetOrientation = { northPoleRaDeg: 33, northPoleDecDeg: 61, rotationPeriodSeconds: 71000 };
+  const obs = { latDeg: 42, lonDeg: 210 };
+  for (const t of [0, 0.001, 0.4]) {
+    const b = horizontalBasisIcrs(o, obs, t);
+    for (const [ra, dec] of [[12, 34], [200, -50], [300, 5]] as const) {
+      const d = raDecToVec(ra, dec);
+      const alt = Math.asin(Math.max(-1, Math.min(1, dot(d, b.up)))) * R2D;
+      let az = Math.atan2(dot(d, b.east), dot(d, b.north)) * R2D; if (az < 0) az += 360;
+      const h = inertialToHorizontal(d, o, obs, t);
+      assert.ok(Math.abs(alt - h.altDeg) < 1e-9 && Math.abs(az - h.azDeg) < 1e-9, `basis alt/az mismatch at ${ra},${dec},t=${t}`);
+    }
+  }
 });
 
 test("the horizontal sky is periodic in one sidereal rotation", () => {
