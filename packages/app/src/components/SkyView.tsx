@@ -15,7 +15,7 @@ interface Props {
   exposureRef: (setExposure: (v: number) => void) => void;
   milkyWayPoints: { dir: Vec3; brightness: number }[];
   bodies: BodyMarker[];
-  paths: { pts: Vec3[]; color: number }[];
+  paths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[];
   sensor: Sensor;
   projection: "gnomonic" | "fisheye" | "dome";
   horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };

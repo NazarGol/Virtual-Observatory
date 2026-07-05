@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { CatalogStar, InertialStar, Vec3 } from "@vobs/engine";
-import { comovingCandidates, anomalyCandidates, alignmentCandidates } from "../analysis";
+import { comovingCandidates, anomalyCandidates, alignmentCandidates, candidatesFromStar } from "../analysis";
 
 const cat = (id: string, pos: Vec3, vel: Vec3): CatalogStar =>
   ({ id, name: id, pos_pc: pos, vel_kms: vel, mag_ref: 5, d_ref_pc: 10, bp_rp: 0.6 } as CatalogStar);
@@ -41,6 +41,28 @@ describe("anomalyCandidates", () => {
     expect(labels).toContain("bluest · blue");
     expect(labels).toContain("reddest · red");
     out.forEach((c) => expect(c.objectIds.length).toBe(1));
+  });
+});
+
+describe("candidatesFromStar", () => {
+  it("proposes co-moving companions and sky neighbours for the selected star", () => {
+    const v: Vec3 = [12, 0, 0];
+    const catalog = [
+      cat("SELF", [0, 0, 0], v), cat("MOVE1", [4, 1, 0], [12.4, 0.2, 0]), cat("MOVE2", [2, 3, 1], [11.6, -0.3, 0]),
+      cat("DRIFT", [3, 0, 0], [-30, 0, 0]),   // near but wrong velocity
+    ];
+    const d = (deg: number): Vec3 => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180), 0];
+    const stars = [
+      star("SELF", d(0), 3), star("MOVE1", d(40), 3), star("MOVE2", d(80), 3),
+      star("DRIFT", d(120), 3), star("NB", d(2.5), 3), // NB is 2.5deg from SELF on the sky
+    ];
+    const out = candidatesFromStar(catalog, stars, new Map(), "SELF");
+    const cm = out.find((c) => c.kind === "co-moving");
+    expect(cm).toBeTruthy();
+    expect(cm!.objectIds).toContain("SELF");
+    expect(cm!.objectIds.sort()).toEqual(["MOVE1", "MOVE2", "SELF"]);
+    const nb = out.find((c) => c.kind === "neighbour" && c.objectIds.includes("NB"));
+    expect(nb).toBeTruthy();
   });
 });
 

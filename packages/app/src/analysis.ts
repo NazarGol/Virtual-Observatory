@@ -7,7 +7,7 @@ import type { InertialStar, CatalogStar, Vec3 } from "@vobs/engine";
 
 export interface Candidate {
   key: string;
-  kind: "co-moving" | "anomaly" | "alignment";
+  kind: "co-moving" | "anomaly" | "alignment" | "neighbour";
   label: string;
   detail: string;
   objectIds: string[];
@@ -21,6 +21,18 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0
 const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const norm = (v: Vec3): Vec3 => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
 const sepDeg = (a: Vec3, b: Vec3): number => Math.acos(Math.max(-1, Math.min(1, dot(a, b)))) * (180 / Math.PI);
+
+/** How close three directions are to sharing one great circle: the widest pair are the
+ *  endpoints, the third's angular distance off their great circle is the deviation. */
+function tripleDev(a: Vec3, b: Vec3, c: Vec3): { dev: number; span: number; minSep: number } {
+  const sab = sepDeg(a, b), sac = sepDeg(a, c), sbc = sepDeg(b, c);
+  let e1 = a, e2 = b, mid = c;
+  if (sac >= sab && sac >= sbc) { e1 = a; e2 = c; mid = b; }
+  else if (sbc >= sab && sbc >= sac) { e1 = b; e2 = c; mid = a; }
+  const n = norm(cross(e1, e2));
+  const dev = Math.asin(Math.max(0, Math.min(1, Math.abs(dot(mid, n))))) * (180 / Math.PI);
+  return { dev, span: Math.max(sab, sac, sbc), minSep: Math.min(sab, sac, sbc) };
+}
 
 /**
  * Co-moving group candidates: catalog stars close together in 3D AND sharing a 3D space
@@ -99,17 +111,9 @@ export function alignmentCandidates(
   const B = stars.filter((s) => s.mag <= magMax);
   const found: { dev: number; ids: string[]; names: string[]; span: number }[] = [];
   for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) for (let k = j + 1; k < B.length; k++) {
-    const a = B[i]!.direction_icrs, b = B[j]!.direction_icrs, c = B[k]!.direction_icrs;
-    const sab = sepDeg(a, b), sac = sepDeg(a, c), sbc = sepDeg(b, c);
-    if (Math.min(sab, sac, sbc) < minSepDeg || Math.max(sab, sac, sbc) > maxSpanDeg) continue;
-    // endpoints = the widest pair; the third is the midpoint to test against their great circle
-    let e1 = a, e2 = b, mid = c;
-    if (sac >= sab && sac >= sbc) { e1 = a; e2 = c; mid = b; }
-    else if (sbc >= sab && sbc >= sac) { e1 = b; e2 = c; mid = a; }
-    const n = norm(cross(e1, e2));
-    const dev = Math.asin(Math.max(0, Math.min(1, Math.abs(dot(mid, n))))) * (180 / Math.PI);
-    if (dev > maxDevDeg) continue;
-    found.push({ dev, ids: [B[i]!.id, B[j]!.id, B[k]!.id], names: [B[i]!.name || B[i]!.id, B[j]!.name || B[j]!.id, B[k]!.name || B[k]!.id], span: Math.max(sab, sac, sbc) });
+    const t = tripleDev(B[i]!.direction_icrs, B[j]!.direction_icrs, B[k]!.direction_icrs);
+    if (t.minSep < minSepDeg || t.span > maxSpanDeg || t.dev > maxDevDeg) continue;
+    found.push({ dev: t.dev, ids: [B[i]!.id, B[j]!.id, B[k]!.id], names: [B[i]!.name || B[i]!.id, B[j]!.name || B[j]!.id, B[k]!.name || B[k]!.id], span: t.span });
   }
   found.sort((x, y) => x.dev - y.dev);
   // greedily drop triples that reuse a star already claimed by a straighter one
@@ -121,5 +125,51 @@ export function alignmentCandidates(
       detail: `≈collinear, deviation ${f.dev.toFixed(2)}° over ${f.span.toFixed(0)}°`, objectIds: f.ids });
     if (out.length >= 4) break;
   }
+  return out;
+}
+
+/**
+ * Star-centric proposal (user request): given ONE selected star, propose candidates that
+ * involve it specifically — its co-moving companions (shared 3D velocity + proximity), its
+ * nearest neighbours on the sky (possible doubles / line-of-sight pairs), and near-collinear
+ * lines running through it. Far more focused than the blanket field scan.
+ */
+export function candidatesFromStar(
+  catalog: CatalogStar[], stars: InertialStar[], _pm: Map<string, number>, starId: string,
+  dTolPc = 25, vTolKms = 6,
+): Candidate[] {
+  const catById = new Map(catalog.map((s) => [s.id, s]));
+  const self = catById.get(starId), selfI = stars.find((s) => s.id === starId);
+  if (!self || !selfI) return [];
+  const nameOf = (id: string) => stars.find((s) => s.id === id)?.name || id;
+  const out: Candidate[] = [];
+
+  // 1) co-moving companions: nearby in 3D AND sharing the star's space velocity
+  const comp = catalog.filter((s) => s.id !== starId
+    && d2(s.pos_pc, self.pos_pc) < dTolPc * dTolPc && d2(s.vel_kms, self.vel_kms) < vTolKms * vTolKms);
+  if (comp.length) out.push({ key: `cm-${starId}`, kind: "co-moving",
+    label: `co-movers of ${nameOf(starId)} · ${comp.length}`,
+    detail: `share its space velocity within ${dTolPc} pc`, objectIds: [starId, ...comp.map((s) => s.id)] });
+
+  // 2) nearest neighbours on the sky (candidate doubles / pairs)
+  const near = stars.filter((s) => s.id !== starId)
+    .map((s) => ({ s, sep: sepDeg(selfI.direction_icrs, s.direction_icrs) }))
+    .sort((a, b) => a.sep - b.sep).slice(0, 3);
+  for (const n of near) if (n.sep < 8) out.push({ key: `nb-${starId}-${n.s.id}`, kind: "neighbour",
+    label: `${nameOf(starId)} — ${n.s.name || n.s.id}`, detail: `${n.sep.toFixed(2)}° apart on the sky`,
+    objectIds: [starId, n.s.id] });
+
+  // 3) near-collinear lines through the star (with two other reasonably bright stars)
+  const B = stars.filter((s) => s.id !== starId && s.mag <= 3.6);
+  const lines: { dev: number; ids: string[]; names: string[]; span: number }[] = [];
+  for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) {
+    const t = tripleDev(selfI.direction_icrs, B[i]!.direction_icrs, B[j]!.direction_icrs);
+    if (t.minSep < 3 || t.span > 50 || t.dev > 0.7) continue;
+    lines.push({ dev: t.dev, ids: [starId, B[i]!.id, B[j]!.id], names: [nameOf(starId), B[i]!.name || B[i]!.id, B[j]!.name || B[j]!.id], span: t.span });
+  }
+  lines.sort((a, b) => a.dev - b.dev);
+  for (const f of lines.slice(0, 2)) out.push({ key: `alself-${f.ids.join("-")}`, kind: "alignment",
+    label: `alignment · ${f.names.join(" – ")}`, detail: `≈collinear, deviation ${f.dev.toFixed(2)}° over ${f.span.toFixed(0)}°`, objectIds: f.ids });
+
   return out;
 }

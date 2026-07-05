@@ -20,7 +20,7 @@ type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry, milkyWayBand } from "./milkyway";
-import { comovingCandidates, anomalyCandidates, alignmentCandidates, type Candidate } from "./analysis";
+import { comovingCandidates, anomalyCandidates, alignmentCandidates, candidatesFromStar, type Candidate } from "./analysis";
 import { geodesicArc, SENSORS, type StarPoint, type Sensor } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1", survey: "vobs.survey.v1" };
@@ -218,21 +218,31 @@ export function App() {
     return { orbitYears, rotDays: rotSec / 86400, locked, type: worldVantage.type, name: worldVantage.worldName };
   }, [worldVantage]);
 
-  // Body trails (B4): each body's on-sky track over one local year, sampled from the world's
-  // Keplerian bodies. Anchored at the epoch so it reads as the orbit ring the body rides.
+  // Body trails (B4): each body's on-sky track over ONE OF ITS OWN periods (so fast moons
+  // aren't undersampled), with even-time tick marks whose spacing reads as orbital speed.
   const trailPaths = useMemo(() => {
-    if (!worldVantage || !bodyTrails) return [] as { pts: Vec3[]; color: number }[];
-    const span = worldClock ? worldClock.orbitYears : 1, N = 240;
+    if (!worldVantage || !bodyTrails) return [] as { pts: Vec3[]; color: number; ticks: Vec3[] }[];
+    const world = worldVantage.world;
+    const orbitYears = worldClock ? worldClock.orbitYears : 1;
+    const Mp = Math.max(world.planet.mass_mearth * 3.003e-6, 1e-12); // planet mass in Msun
     const colorOf = (k: string) => (k === "host_star" ? 0xffcf6b : k === "moon" ? 0x9fb0c8 : 0x9fc0ff);
-    const byName = new Map<string, { pts: Vec3[]; color: number }>();
-    for (let i = 0; i <= N; i++) {
-      for (const b of worldBodies(worldVantage.world, (i / N) * span)) {
-        let e = byName.get(b.name);
-        if (!e) { e = { pts: [], color: colorOf(b.kind) }; byName.set(b.name, e); }
-        e.pts.push(b.direction_icrs as Vec3);
+    const periodOf = (name: string, kind: string): number => {
+      if (kind === "moon") { const m = world.moons.find((mo) => mo.name === name); if (m) return Math.sqrt(m.orbit.a_au ** 3 / Mp); }
+      return orbitYears; // host reflex + siblings ~ the planet's orbital period
+    };
+    const N = 180, tickStep = Math.max(1, Math.round(N / 24));
+    const out: { pts: Vec3[]; color: number; ticks: Vec3[] }[] = [];
+    for (const id of worldBodies(world, 0).map((b) => ({ name: b.name, kind: b.kind }))) {
+      const P = periodOf(id.name, id.kind), pts: Vec3[] = [], ticks: Vec3[] = [];
+      for (let i = 0; i <= N; i++) {
+        const b = worldBodies(world, (i / N) * P).find((x) => x.name === id.name);
+        if (!b) continue;
+        pts.push(b.direction_icrs as Vec3);
+        if (i % tickStep === 0) ticks.push(b.direction_icrs as Vec3);
       }
+      out.push({ pts, color: colorOf(id.kind), ticks });
     }
-    return [...byName.values()];
+    return out;
   }, [worldVantage, bodyTrails, worldClock]);
 
   // Event scanner (B4): on demand, scan a window for the host's rise/set/transit (day/night)
@@ -312,6 +322,12 @@ export function App() {
       ...alignmentCandidates(inertial),
       ...anomalyCandidates(inertial, pmById),
     ]);
+    setCandScanned(true);
+  };
+  // Star-centric proposal (user request): candidates that involve the selected star.
+  const findFromStar = (id: string) => {
+    if (!sky) return;
+    setCandidates(candidatesFromStar(sky.catalog.stars, inertial, pmById, id));
     setCandScanned(true);
   };
 
@@ -466,10 +482,14 @@ export function App() {
           selection={selection} draft={draft}
           onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
           pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
-        <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG} />
+        <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG}
+          pm={focusId ? pmById.get(focusId) : undefined} />
         <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
           onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => setTYears(t)} />
         <AnalysisPanel candidates={candidates} scanned={candScanned} onScan={findCandidates}
+          anchorId={selection.length === 1 ? selection[0]! : null}
+          anchorName={selection.length === 1 ? metaById.get(selection[0]!)?.name || selection[0]! : null}
+          onProposeFrom={findFromStar}
           epochDelta={epochDelta} onEpoch={setEpochDelta}
           onSelect={(ids) => { setSelection(ids); setTool("select"); }} />
         <Measurements results={results} metaById={metaById}
@@ -532,9 +552,12 @@ function Toolbar(props: {
         <span className="btns">
           <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
           <button className={props.bodyTrails ? "active" : ""} onClick={props.onBodyTrails} disabled={!props.observing}
-            title="draw each body's on-sky track over one local year">trails</button>
+            title="draw each body's on-sky orbit track with even-time tick marks">trails</button>
         </span>
       </div>
+      {props.bodyTrails && props.observing && (
+        <div className="faint" style={{ fontSize: 10.5, marginTop: 3 }}>trail dots = 1/24 of each body's orbit — bunched = slow, spread = fast.</div>
+      )}
       <div className="muted" style={{ marginTop: 8 }}>sensor</div>
       <div className="seg" style={{ display: "flex", marginTop: 4 }}>
         {SENSORS.map((s) => (
@@ -579,7 +602,7 @@ function Toolbar(props: {
   );
 }
 
-function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; dir?: Vec3; meta?: InertialStar; sun: { dir: Vec3; altDeg: number } | null; glareDeg: number }) {
+function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; dir?: Vec3; meta?: InertialStar; sun: { dir: Vec3; altDeg: number } | null; glareDeg: number; pm?: number }) {
   if (!props.dir || !props.meta || !props.o || !props.obs) return <div className="panel"><h2>Readout</h2><div className="muted">hover or select a star</div></div>;
   const d = props.dir, m = props.meta;
   const h = horizontalOf(props.o, props.obs, d, props.t);
@@ -600,6 +623,7 @@ function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; d
       <div className="row"><span className="k">alt / az</span><span className="v">{h.altDeg.toFixed(2)}° / {h.azDeg.toFixed(2)}°</span></div>
       <div className="row"><span className="k">magnitude</span><span className="v">{m.mag.toFixed(2)}</span></div>
       <div className="row"><span className="k">distance</span><span className="v">{m.distance_pc.toFixed(2)} pc</span></div>
+      {props.pm != null && <div className="row"><span className="k">proper motion</span><span className="v">{props.pm < 1000 ? `${props.pm.toFixed(1)} mas/yr` : `${(props.pm / 1000).toFixed(2)} ″/yr`}</span></div>}
       <div className="row"><span className="k">transit alt</span><span className="v">{rst.transitAltitudeDeg.toFixed(1)}°</span></div>
       <div className="row"><span className="k">events</span><span className="v">{ev}</span></div>
       {heliacal && (
@@ -769,6 +793,7 @@ function ArrivalCard(props: { clock: WorldClock; hostLabel: string; distPc: numb
  *  the human selects, confirms, names, records. Compute never authors a finished pattern. */
 function AnalysisPanel(props: {
   candidates: Candidate[]; scanned: boolean; onScan: () => void;
+  anchorId: string | null; anchorName: string | null; onProposeFrom: (id: string) => void;
   epochDelta: number; onEpoch: (y: number) => void; onSelect: (ids: string[]) => void;
 }) {
   return (
@@ -783,8 +808,13 @@ function AnalysisPanel(props: {
       </div>
       <div className="faint" style={{ marginTop: 4, fontSize: 10.5 }}>ghost tracks — where the fastest movers drift over the span.</div>
       <hr className="hair" />
-      <button onClick={props.onScan} title="propose candidate regularities from what is in view">◇ propose candidates</button>
-      {props.scanned && props.candidates.length === 0 && <div className="muted" style={{ marginTop: 8 }}>no candidates in this field</div>}
+      <div className="btns">
+        {props.anchorId
+          ? <button onClick={() => props.onProposeFrom(props.anchorId!)} title="propose candidates that involve the selected star">◇ propose from {props.anchorName}</button>
+          : <span className="muted">select one star to propose from it</span>}
+        <button onClick={props.onScan} title="scan the whole field for regularities">scan field</button>
+      </div>
+      {props.scanned && props.candidates.length === 0 && <div className="muted" style={{ marginTop: 8 }}>no candidates found</div>}
       {props.candidates.length > 0 && (
         <div className="mlist" style={{ marginTop: 8 }}>
           {props.candidates.map((c) => (

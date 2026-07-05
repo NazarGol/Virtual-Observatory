@@ -126,7 +126,7 @@ export class StarField {
   private sunGroup = new THREE.Group();
   private bodyGroup = new THREE.Group();
   private pathGroup = new THREE.Group();  // body trails / orbital tracks (B4)
-  private rawPaths: { pts: Vec3[]; color: number }[] = [];
+  private rawPaths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[] = [];
   private groundGroup = new THREE.Group(); // dome ground + twilight (B8)
   private sensor: Sensor = "visible";
   private ringTex = ringTexture();
@@ -500,7 +500,7 @@ export class StarField {
   /** On-sky tracks for bodies (B4): where each body travels over a span. Each polyline is
    *  projected point-by-point and broken into visible segments so it clips cleanly in
    *  fisheye/dome. Dim, drawn behind the body discs. */
-  setPaths(paths: { pts: Vec3[]; color: number }[]): void {
+  setPaths(paths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[]): void {
     this.rawPaths = paths;
     this.layoutPaths();
   }
@@ -520,6 +520,16 @@ export class StarField {
         else flush();
       }
       flush();
+      // even-time tick marks: their spacing reads as speed (bunched = slow, spread = fast)
+      if (path.ticks && path.ticks.length) {
+        const pts: number[] = [];
+        for (const d of path.ticks) { const p = this.projectScene(d); if (p) pts.push(p[0], p[1], p[2]); }
+        if (pts.length) {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pts), 3));
+          this.pathGroup.add(new THREE.Points(g, new THREE.PointsMaterial({ color: path.color, size: 3.2 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.85 })));
+        }
+      }
     }
   }
 
