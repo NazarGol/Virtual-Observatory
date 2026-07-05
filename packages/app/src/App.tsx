@@ -22,7 +22,17 @@ import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry, milkyWayBand } from "./milkyway";
 import { geodesicArc, SENSORS, type StarPoint, type Sensor } from "./three/StarField";
 
-const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
+const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1", survey: "vobs.survey.v1" };
+
+// Survey log (Gate B, B6): the human records candidate objects; unnamed ones get a running
+// VOEC-### designation. Compute proposes (the sky, the sensors); the human disposes (records).
+interface SurveyEntry {
+  id: string; designation: string; objectId: string;
+  raDeg: number; decDeg: number; mag: number; sensor: Sensor;
+  atYears: number; note: string; createdAtYears: number;
+}
+const serializeSurvey = (e: SurveyEntry[]) => JSON.stringify(e);
+const parseSurvey = (s: string): SurveyEntry[] => { const a = JSON.parse(s); return Array.isArray(a) ? (a as SurveyEntry[]) : []; };
 const R2D = 180 / Math.PI;
 const uid = () => crypto.randomUUID();
 const raOf = (d: Vec3) => ((Math.atan2(d[1], d[0]) * R2D) + 360) % 360;
@@ -47,6 +57,8 @@ const PLAY_RATES: { label: string; yps: number }[] = [
   { label: "1 hr/s", yps: 3600 / SPY }, { label: "1 day/s", yps: 86400 / SPY },
   { label: "1 mo/s", yps: (30 * 86400) / SPY }, { label: "1 yr/s", yps: 1 }, { label: "100 yr/s", yps: 100 },
 ];
+
+type WorldClock = { orbitYears: number; rotDays: number; locked: boolean; type: string; name: string };
 
 type Tool = "select" | "angular_distance" | "separation_position_angle" | "alignment" | "figure" | "label";
 const TOOL_LABEL: Record<Tool, string> = {
@@ -97,7 +109,8 @@ export function App() {
   const [sky, setSky] = useState<LoadedSky | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
-  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World } | null>(null);
+  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World; type: string; worldName: string } | null>(null);
+  const [showArrival, setShowArrival] = useState(false);
   const [tYears, setTYears] = useState(0);
   const [scale, setScale] = useState(86400 / SPY); // ±1 day default -- a living sky
   const [playing, setPlaying] = useState(false);
@@ -117,6 +130,7 @@ export function App() {
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
   const [notebook, setNotebook] = useState<Notebook>(() => loadJSON(KEY.note, parseNotebook, emptyNotebook()));
+  const [survey, setSurvey] = useState<SurveyEntry[]>(() => loadJSON(KEY.survey, parseSurvey, []));
   const setFovRef = useRef<(f: number) => void>(() => {});
   const setExposureRef = useRef<(v: number) => void>(() => {});
 
@@ -177,6 +191,19 @@ export function App() {
   useEffect(() => { localStorage.setItem(KEY.meas, serializeMeasurements(measurements)); }, [measurements]);
   useEffect(() => { localStorage.setItem(KEY.annot, serializeAnnotations(annotations)); }, [annotations]);
   useEffect(() => { localStorage.setItem(KEY.note, serializeNotebook(notebook)); }, [notebook]);
+  useEffect(() => { localStorage.setItem(KEY.survey, serializeSurvey(survey)); }, [survey]);
+
+  // World-native time (Gate B, B1): the observed world's own rotation ("day") and orbit
+  // ("year") from Kepler III, and whether it is spin-orbit locked (host star never sets).
+  const worldClock = useMemo(() => {
+    if (!worldVantage) return null;
+    const w = worldVantage.world;
+    const a = w.planet.orbit.a_au, M = Math.max(w.host_star.mass_msun, 1e-6);
+    const orbitYears = Math.sqrt((a * a * a) / M);       // P[yr] = sqrt(a[AU]^3 / M[Msun])
+    const orbitSec = orbitYears * SPY, rotSec = w.planet.rotation_period_s;
+    const locked = Math.abs(rotSec - orbitSec) / orbitSec < 1e-3;
+    return { orbitYears, rotDays: rotSec / 86400, locked, type: worldVantage.type, name: worldVantage.worldName };
+  }, [worldVantage]);
 
   const dirById = useMemo(() => new Map(inertial.map((s) => [s.id, s.direction_icrs])), [inertial]);
   const metaById = useMemo(() => new Map(inertial.map((s) => [s.id, s])), [inertial]);
@@ -286,14 +313,30 @@ export function App() {
   const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
 
   if (view === "gallery") return <Gallery onBack={() => setView("instrument")}
-    onObserve={(w) => { setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w) }); setView("instrument"); }} />;
+    onObserve={(w) => {
+      setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w), type: w.world_type, worldName: w.name });
+      setShowArrival(true); setView("instrument");
+    }} />;
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
 
   const focusId = hoverId ?? selection[0] ?? draft[draft.length - 1] ?? null;
   const focusDir = focusId ? dirById.get(focusId) : undefined;
   const focusMeta = focusId ? metaById.get(focusId) : undefined;
+  const focusName = focusMeta ? focusMeta.name || focusMeta.id : null;
   const pendingLabelName = pendingLabel ? metaById.get(pendingLabel)?.name || pendingLabel : null;
+
+  // Record the current focus object into the survey log; unnamed stars get the next VOEC-###.
+  const recordSurvey = () => {
+    if (!focusId || !focusDir || !focusMeta) return;
+    const named = !!focusMeta.name && focusMeta.name !== focusMeta.id;
+    const n = survey.filter((e) => e.designation.startsWith("VOEC-")).length + 1;
+    const designation = named ? focusMeta.name : `VOEC-${String(n).padStart(3, "0")}`;
+    setSurvey((s) => [...s, {
+      id: uid(), designation, objectId: focusId, raDeg: raOf(focusDir), decDeg: decOf(focusDir),
+      mag: focusMeta.mag, sensor, atYears: tYears, note: "", createdAtYears: tYears,
+    }]);
+  };
 
   const cap = PROPAGATION_MODELS.rectilinear.honestCapYears;
   const speculative = Math.abs(tYears) > cap;
@@ -301,6 +344,10 @@ export function App() {
   return (
     <div className="app">
       <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ World gallery</button>
+      {showArrival && worldVantage && worldClock && (
+        <ArrivalCard clock={worldClock} hostLabel={worldVantage.label} distPc={Math.hypot(...worldVantage.pos)}
+          world={worldVantage.world} onClose={() => setShowArrival(false)} />
+      )}
       {speculative && (
         <div className="speculative">
           ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)}. Beyond the rectilinear model's validated range; these
@@ -335,6 +382,9 @@ export function App() {
         <Annotations annotations={annotations} figures={figures}
           onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
           onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
+        <SurveyPanel entries={survey} focusName={focusName} sensor={sensor} onRecord={recordSurvey}
+          onJump={(t, id) => { setTYears(t); setSelection([id]); setTool("select"); }}
+          onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
         <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
           onJump={(t, ids) => { setTYears(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
           onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
@@ -342,7 +392,7 @@ export function App() {
       </aside>
 
       <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} speculative={speculative}
-        playing={playing} onPlay={() => setPlaying((p) => !p)} rate={rate} setRate={setRate} />
+        playing={playing} onPlay={() => setPlaying((p) => !p)} rate={rate} setRate={setRate} worldClock={worldClock} />
     </div>
   );
 }
@@ -561,8 +611,13 @@ function NotebookPanel(props: {
 
 function TimeBar(props: {
   t: number; scale: number; setScale: (s: number) => void; setT: (t: number) => void; starCount: number; speculative: boolean;
-  playing: boolean; onPlay: () => void; rate: number; setRate: (r: number) => void;
+  playing: boolean; onPlay: () => void; rate: number; setRate: (r: number) => void; worldClock: WorldClock | null;
 }) {
+  const wc = props.worldClock;
+  const localYr = wc ? props.t / wc.orbitYears : 0;
+  const wcTip = wc && (wc.locked
+    ? `Spin-orbit locked: the host star hangs at a fixed point in the sky — no sunrise or sunset. A rotation equals one orbit (${wc.rotDays.toFixed(0)} d), so there is no solar day.`
+    : `Local day ${wc.rotDays.toFixed(2)} d · local year ${wc.orbitYears.toFixed(2)} yr (Kepler from a and host mass).`);
   return (
     <div className="timebar">
       <button className={props.playing ? "active" : ""} onClick={props.onPlay} title="play / pause">{props.playing ? "❚❚" : "▶"}</button>
@@ -570,6 +625,11 @@ function TimeBar(props: {
         {PLAY_RATES.map((r) => <option key={r.label} value={r.yps}>{r.label}</option>)}
       </select>
       <span className={"clock" + (props.speculative ? " spec" : "")}>t = {fmtT(props.t)}{props.speculative ? " ⚠" : ""}</span>
+      {wc && (
+        <span className="muted" title={wcTip} style={{ whiteSpace: "nowrap" }}>
+          · {localYr.toFixed(2)} local-yr {wc.locked && <b style={{ color: "var(--warn)" }}>◑ tide-locked</b>}
+        </span>
+      )}
       <input type="range" min={-1000} max={1000} step={0.5} value={Math.max(-1000, Math.min(1000, (props.t / props.scale) * 1000))}
         onChange={(e) => props.setT((Number(e.target.value) / 1000) * props.scale)} />
       <select value={props.scale} onChange={(e) => props.setScale(Number(e.target.value))}>
@@ -577,6 +637,57 @@ function TimeBar(props: {
       </select>
       <button onClick={() => props.setT(0)}>now</button>
       <span className="muted">{props.starCount} stars</span>
+    </div>
+  );
+}
+
+/** Arrival card (B7): the moment of relocating to a world — where you are, in its terms. */
+function ArrivalCard(props: { clock: WorldClock; hostLabel: string; distPc: number; world: World; onClose: () => void }) {
+  const w = props.world, wc = props.clock;
+  return (
+    <div className="arrival card" style={{ width: 344, padding: "12px 14px", background: "var(--panel)", boxShadow: "0 10px 34px rgba(0,0,0,.6)" }}>
+      <div className="chead" style={{ marginBottom: 8 }}>
+        <span style={{ letterSpacing: ".16em", textTransform: "uppercase", fontSize: 10, color: "var(--muted)" }}>◆ Arrival</span>
+        <button className="x" onClick={props.onClose}>×</button>
+      </div>
+      <div style={{ fontSize: 15, color: "var(--ink)" }}>{wc.name}</div>
+      <div className="muted" style={{ margin: "1px 0 9px" }}>{wc.type.replace(/_/g, " ")} · orbiting {props.hostLabel}</div>
+      <div className="row"><span className="k">distance from Sol</span><span className="v">{props.distPc.toFixed(2)} pc</span></div>
+      <div className="row"><span className="k">host star</span><span className="v">{w.host_star.mass_msun.toFixed(2)} M☉ · {Math.round(w.host_star.teff_k)} K</span></div>
+      <div className="row"><span className="k">local year</span><span className="v">{wc.orbitYears.toFixed(2)} yr</span></div>
+      <div className="row"><span className="k">local day</span><span className="v">{wc.locked ? "— tide-locked" : `${wc.rotDays.toFixed(2)} d`}</span></div>
+      <div className="row"><span className="k">moons</span><span className="v">{w.moons.length}</span></div>
+      <div className="muted" style={{ marginTop: 9, fontSize: 11, lineHeight: 1.45 }}>
+        The sky below is this world's — the real catalog, relocated to its host.{wc.locked ? " Its star never sets." : ""}
+      </div>
+    </div>
+  );
+}
+
+/** Survey log (B6): the human's record of candidate objects. Unnamed → VOEC-###. */
+function SurveyPanel(props: {
+  entries: SurveyEntry[]; focusName: string | null; sensor: Sensor;
+  onRecord: () => void; onJump: (t: number, id: string) => void; onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="panel">
+      <h2>Survey log {props.entries.length > 0 && <span className="faint">{props.entries.length}</span>}</h2>
+      {props.focusName
+        ? <button onClick={props.onRecord} title="add the focused object to the survey log">+ record “{props.focusName}” · {SENSOR_LABEL[props.sensor]}</button>
+        : <div className="muted">hover or select an object to record it</div>}
+      {props.entries.length > 0 && (
+        <div className="mlist" style={{ marginTop: 8 }}>
+          {props.entries.slice().reverse().map((e) => (
+            <div key={e.id} className="mitem">
+              <div className="top">
+                <button className="link" onClick={() => props.onJump(e.atYears, e.objectId)}>{e.designation}</button>
+                <span className="faint" style={{ fontSize: 11 }}>{e.sensor}<button className="x" onClick={() => props.onDelete(e.id)}>✕</button></span>
+              </div>
+              <div className="ids">{e.raDeg.toFixed(2)}° / {e.decDeg.toFixed(2)}° · m{e.mag.toFixed(1)} · {fmtT(e.atYears)}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
