@@ -104,8 +104,10 @@ select { padding: 3px 6px; }
 .inline-form input:focus, .inline-form textarea:focus { outline: none; border-color: var(--accent-dim); }
 
 /* ---- time bar ---- */
-.timebar { grid-column: 1 / 2; display: flex; align-items: center; gap: 12px; padding: 9px 14px;
-  background: var(--panel); border-top: 1px solid var(--line); position: relative; z-index: 30; }
+.timebars { grid-column: 1 / 2; display: flex; flex-direction: column; position: relative; z-index: 30; }
+.timebar { display: flex; align-items: center; gap: 11px; padding: 8px 14px;
+  background: var(--panel); border-top: 1px solid var(--line); }
+.tlabel { min-width: 44px; color: var(--muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: .14em; }
 .timebar input[type=range] { flex: 1; accent-color: var(--accent); }
 .timebar .clock { min-width: 168px; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
 .timebar .clock.spec { color: var(--warn); }

@@ -47,16 +47,22 @@ const fmtT = (y: number) => {
 };
 const hoursFromNow = (e: number, now: number) => ((e - now) * SPY) / 3600;
 
-// Time scales (years) sec -> millennia, and play rates (years per real second).
-const TIME_SCALES: { label: string; years: number }[] = [
-  { label: "±1 min", years: 60 / SPY }, { label: "±1 hr", years: 3600 / SPY },
-  { label: "±1 day", years: 86400 / SPY }, { label: "±30 days", years: (30 * 86400) / SPY },
-  { label: "±1 yr", years: 1 }, { label: "±100 yr", years: 100 }, { label: "±10 kyr", years: 1e4 },
-  { label: "±100 kyr", years: 1e5 }, { label: "±1 Myr", years: 1e6 }, { label: "±10 Myr", years: 1e7 },
+// Two timelines over ONE underlying coordinate (Gate B-FIX 2). EPOCH = deep time (stellar
+// proper motion / precession, kyr-Myr); LOCAL = world-native fast time (rotation, sun, moons,
+// sub-day to a few orbits). Sweeping local never recomputes the star field (Stage-1).
+const EPOCH_SCALES: { label: string; years: number }[] = [
+  { label: "±100 yr", years: 100 }, { label: "±10 kyr", years: 1e4 }, { label: "±100 kyr", years: 1e5 },
+  { label: "±1 Myr", years: 1e6 }, { label: "±10 Myr", years: 1e7 },
 ];
-const PLAY_RATES: { label: string; yps: number }[] = [
-  { label: "1 hr/s", yps: 3600 / SPY }, { label: "1 day/s", yps: 86400 / SPY },
-  { label: "1 mo/s", yps: (30 * 86400) / SPY }, { label: "1 yr/s", yps: 1 }, { label: "100 yr/s", yps: 100 },
+const EPOCH_RATES: { label: string; yps: number }[] = [
+  { label: "100 yr/s", yps: 100 }, { label: "1 kyr/s", yps: 1e3 }, { label: "10 kyr/s", yps: 1e4 }, { label: "100 kyr/s", yps: 1e5 },
+];
+const LOCAL_SCALES: { label: string; years: number }[] = [
+  { label: "±1 hr", years: 3600 / SPY }, { label: "±1 day", years: 86400 / SPY }, { label: "±30 d", years: (30 * 86400) / SPY },
+  { label: "±1 yr", years: 1 }, { label: "±10 yr", years: 10 },
+];
+const LOCAL_RATES: { label: string; yps: number }[] = [
+  { label: "1 hr/s", yps: 3600 / SPY }, { label: "1 day/s", yps: 86400 / SPY }, { label: "1 mo/s", yps: (30 * 86400) / SPY }, { label: "1 yr/s", yps: 1 },
 ];
 
 type WorldClock = { orbitYears: number; rotDays: number; locked: boolean; type: string; name: string };
@@ -134,10 +140,15 @@ export function App() {
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
   const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World; type: string; worldName: string } | null>(null);
   const [showArrival, setShowArrival] = useState(false);
-  const [tYears, setTYears] = useState(0);
-  const [scale, setScale] = useState(86400 / SPY); // ±1 day default -- a living sky
-  const [playing, setPlaying] = useState(false);
-  const [rate, setRate] = useState(PLAY_RATES[1]!.yps); // 1 day/s
+  const [epochYears, setEpochYears] = useState(0);   // deep time (proper motion / precession)
+  const [localYears, setLocalYears] = useState(0);   // world-native fast time (rotation, sun, moons)
+  const tYears = epochYears + localYears;            // the single underlying coordinate
+  const [epochScale, setEpochScale] = useState(EPOCH_SCALES[0]!.years);
+  const [epochRate, setEpochRate] = useState(EPOCH_RATES[0]!.yps);
+  const [epochPlaying, setEpochPlaying] = useState(false);
+  const [localScale, setLocalScale] = useState(LOCAL_SCALES[1]!.years); // ±1 day
+  const [localRate, setLocalRate] = useState(LOCAL_RATES[1]!.yps);      // 1 day/s
+  const [localPlaying, setLocalPlaying] = useState(false);
   const [inertial, setInertial] = useState<InertialStar[]>([]);
   const [inertialEpoch, setInertialEpoch] = useState(0); // sim time the inertial sky was last computed at
   const [epochDelta, setEpochDelta] = useState(0);        // B5 comparator span (0 = off)
@@ -201,22 +212,30 @@ export function App() {
     // Freeze Stage-1 (proper motion) when scrubbing/playing at sub-year scales -- only
     // recompute the star field when time has moved far enough to matter. The apparatus +
     // bodies (memos below) update every frame regardless.
-    const recomputed = sessionInfo.session.ensureInertial(tYears);
-    if (recomputed) { setInertial([...sessionInfo.session.inertial]); setInertialEpoch(tYears); }
-  }, [sessionInfo, tYears]);
+    // Stage-1 (proper motion) is driven by the EPOCH clock only: sweeping the local clock
+    // moves the sun/moons/rotation but never recomputes the star field.
+    const recomputed = sessionInfo.session.ensureInertial(epochYears);
+    if (recomputed) { setInertial([...sessionInfo.session.inertial]); setInertialEpoch(epochYears); }
+  }, [sessionInfo, epochYears]);
 
-  // play mode: advance sim time by `rate` years per real second (rAF-driven).
+  // two independent play loops (rAF-driven): epoch (deep) and local (fast).
   useEffect(() => {
-    if (!playing) return;
+    if (!epochPlaying) return;
     let raf = 0, last = performance.now();
-    const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000); last = now;
-      setTYears((t) => t + rate * dt);
-      raf = requestAnimationFrame(tick);
-    };
+    const tick = (now: number) => { const dt = Math.min(0.1, (now - last) / 1000); last = now; setEpochYears((t) => t + epochRate * dt); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, rate]);
+  }, [epochPlaying, epochRate]);
+  useEffect(() => {
+    if (!localPlaying) return;
+    let raf = 0, last = performance.now();
+    const tick = (now: number) => { const dt = Math.min(0.1, (now - last) / 1000); last = now; setLocalYears((t) => t + localRate * dt); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [localPlaying, localRate]);
+
+  // Jump to an absolute time (markers/notes/events): put it on the epoch axis, local at 0.
+  const goTo = (t: number) => { setEpochYears(t); setLocalYears(0); };
 
   useEffect(() => { localStorage.setItem(KEY.meas, serializeMeasurements(measurements)); }, [measurements]);
   useEffect(() => { localStorage.setItem(KEY.annot, serializeAnnotations(annotations)); }, [annotations]);
@@ -461,7 +480,14 @@ export function App() {
   };
 
   const cap = PROPAGATION_MODELS.rectilinear.honestCapYears;
-  const speculative = Math.abs(tYears) > cap;
+  const speculative = Math.abs(epochYears) > cap;
+  // local clock reads in world-native units; add a "few orbits" scale when observing a world
+  const localScales = worldClock ? [...LOCAL_SCALES, { label: "±3 orbits", years: 3 * worldClock.orbitYears }] : LOCAL_SCALES;
+  const localReadout = worldClock
+    ? (worldClock.locked
+      ? `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · ◑ no solar day`
+      : `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · ${(localYears * 365.25 / worldClock.rotDays).toFixed(1)} local-days`)
+    : fmtT(localYears);
 
   return (
     <div className="app">
@@ -519,7 +545,7 @@ export function App() {
         </Section>
         <Section title="Event scanner" meta={worldVantage ? scan?.events.length ?? "" : "world only"}>
           <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
-            onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => setTYears(t)} />
+            onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => goTo(t)} />
         </Section>
         <Section title="Measurements" meta={results.length || null}>
           <Measurements results={results} metaById={metaById}
@@ -532,19 +558,30 @@ export function App() {
         </Section>
         <Section title="Survey log" meta={survey.length || null}>
           <SurveyPanel entries={survey} focusName={focusName} sensor={sensor} onRecord={recordSurvey}
-            onJump={(t, id) => { setTYears(t); setSelection([id]); setTool("select"); }}
+            onJump={(t, id) => { goTo(t); setSelection([id]); setTool("select"); }}
             onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
         </Section>
         <Section title="Notebook" meta={(notebook.markers.length + notebook.notes.length) || null}>
           <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
-            onJump={(t, ids) => { setTYears(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
+            onJump={(t, ids) => { goTo(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
             onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
             onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
         </Section>
       </aside>
 
-      <TimeBar t={tYears} scale={scale} setScale={setScale} setT={setTYears} starCount={inertial.length} speculative={speculative}
-        playing={playing} onPlay={() => setPlaying((p) => !p)} rate={rate} setRate={setRate} worldClock={worldClock} />
+      <div className="timebars">
+        <TimeControl label="epoch" value={epochYears} setValue={setEpochYears}
+          scale={epochScale} setScale={setEpochScale} scales={EPOCH_SCALES}
+          rate={epochRate} setRate={setEpochRate} rates={EPOCH_RATES}
+          playing={epochPlaying} onPlay={() => setEpochPlaying((p) => !p)}
+          readout={`${epochYears >= 0 ? "+" : ""}${fmtT(epochYears)}`} speculative={speculative}
+          right={<span className="muted">{inertial.length} stars</span>} />
+        <TimeControl label="local" value={localYears} setValue={setLocalYears}
+          scale={localScale} setScale={setLocalScale} scales={localScales}
+          rate={localRate} setRate={setLocalRate} rates={LOCAL_RATES}
+          playing={localPlaying} onPlay={() => setLocalPlaying((p) => !p)}
+          readout={localReadout} />
+      </div>
     </div>
   );
 }
@@ -767,34 +804,29 @@ function NotebookPanel(props: {
   );
 }
 
-function TimeBar(props: {
-  t: number; scale: number; setScale: (s: number) => void; setT: (t: number) => void; starCount: number; speculative: boolean;
-  playing: boolean; onPlay: () => void; rate: number; setRate: (r: number) => void; worldClock: WorldClock | null;
+/** One timeline control (Gate B-FIX 2): a labelled play/rate/slider/scale row over one axis.
+ *  Rendered twice — an epoch (deep) bar and a local (world-native fast) bar. */
+function TimeControl(props: {
+  label: string; value: number; setValue: (v: number) => void;
+  scale: number; setScale: (s: number) => void; scales: { label: string; years: number }[];
+  rate: number; setRate: (r: number) => void; rates: { label: string; yps: number }[];
+  playing: boolean; onPlay: () => void; readout: string; speculative?: boolean; right?: ReactNode;
 }) {
-  const wc = props.worldClock;
-  const localYr = wc ? props.t / wc.orbitYears : 0;
-  const wcTip = wc && (wc.locked
-    ? `Spin-orbit locked: the host star hangs at a fixed point in the sky — no sunrise or sunset. A rotation equals one orbit (${wc.rotDays.toFixed(0)} d), so there is no solar day.`
-    : `Local day ${wc.rotDays.toFixed(2)} d · local year ${wc.orbitYears.toFixed(2)} yr (Kepler from a and host mass).`);
   return (
     <div className="timebar">
+      <span className="tlabel">{props.label}</span>
       <button className={props.playing ? "active" : ""} onClick={props.onPlay} title="play / pause">{props.playing ? "❚❚" : "▶"}</button>
       <select value={props.rate} onChange={(e) => props.setRate(Number(e.target.value))} title="play rate">
-        {PLAY_RATES.map((r) => <option key={r.label} value={r.yps}>{r.label}</option>)}
+        {props.rates.map((r) => <option key={r.label} value={r.yps}>{r.label}</option>)}
       </select>
-      <span className={"clock" + (props.speculative ? " spec" : "")}>t = {fmtT(props.t)}{props.speculative ? " ⚠" : ""}</span>
-      {wc && (
-        <span className="muted" title={wcTip} style={{ whiteSpace: "nowrap" }}>
-          · {localYr.toFixed(2)} local-yr {wc.locked && <b style={{ color: "var(--warn)" }}>◑ tide-locked</b>}
-        </span>
-      )}
-      <input type="range" min={-1000} max={1000} step={0.5} value={Math.max(-1000, Math.min(1000, (props.t / props.scale) * 1000))}
-        onChange={(e) => props.setT((Number(e.target.value) / 1000) * props.scale)} />
+      <span className={"clock" + (props.speculative ? " spec" : "")}>{props.readout}{props.speculative ? " ⚠" : ""}</span>
+      <input type="range" min={-1000} max={1000} step={0.5} value={Math.max(-1000, Math.min(1000, (props.value / props.scale) * 1000))}
+        onChange={(e) => props.setValue((Number(e.target.value) / 1000) * props.scale)} />
       <select value={props.scale} onChange={(e) => props.setScale(Number(e.target.value))}>
-        {TIME_SCALES.map((s) => <option key={s.label} value={s.years}>{s.label}</option>)}
+        {props.scales.map((s) => <option key={s.label} value={s.years}>{s.label}</option>)}
       </select>
-      <button onClick={() => props.setT(0)}>now</button>
-      <span className="muted">{props.starCount} stars</span>
+      <button onClick={() => props.setValue(0)} title="reset this clock to now">now</button>
+      {props.right}
     </div>
   );
 }
