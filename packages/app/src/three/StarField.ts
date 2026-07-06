@@ -29,6 +29,8 @@ export interface BodyMarker {
   kind: string;
   /** apparent angular diameter, degrees (a point below resolvability) */
   diamDeg: number;
+  /** sunlit fraction 0..1 (moons render as phases; host/undefined = full) */
+  illum?: number;
 }
 
 const R = 100;
@@ -132,6 +134,8 @@ export class StarField {
   private ringTex = ringTexture();
   private sunTex = sunTexture();
   private discTex = discTexture();
+  private phaseTexCache = new Map<number, THREE.Texture>();
+  private moonPhases: { sprite: THREE.Sprite; dir: Vec3; sunDir: Vec3 | null }[] = [];
   private rawSunDir: Vec3 | null = null;
   private rawBodies: BodyMarker[] = [];
 
@@ -480,21 +484,56 @@ export class StarField {
 
   private layoutBodies(): void {
     this.bodyGroup.clear();
+    this.moonPhases = [];
+    const host = this.rawBodies.find((b) => b.kind === "host_star");
+    const hostDir = host ? host.dir : this.rawSunDir;
     for (const b of this.rawBodies) {
       const p = this.projectScene(b.dir);
       if (!p) continue;
       const theta = (b.diamDeg * Math.PI) / 180; // angular diameter, radians
       const perRad = this.mode === "gnomonic" ? R : this.mode === "fisheye" ? R / this.fisheyeMax : R / (Math.PI / 2);
       const size = Math.max(1.3, Math.min(45, theta * perRad)); // floor = a visible point
-      const color = b.kind === "host_star" ? 0xffe08a : b.kind === "moon" ? 0xd6dbe2 : 0x9fc0ff;
-      const disc = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.discTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-      disc.position.set(p[0], p[1], p[2]);
-      disc.scale.setScalar(size);
-      this.bodyGroup.add(disc);
+      if (b.kind === "moon" && b.illum != null) {
+        // moon rendered as a lit phase; its terminator is oriented toward the host each frame
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.phaseTexture(Math.round(b.illum * 20)), transparent: true, depthWrite: false }));
+        sprite.position.set(p[0], p[1], p[2]);
+        sprite.scale.setScalar(Math.max(3.5, size));
+        this.bodyGroup.add(sprite);
+        this.moonPhases.push({ sprite, dir: b.dir, sunDir: hostDir });
+      } else {
+        const color = b.kind === "host_star" ? 0xffe08a : b.kind === "moon" ? 0xd6dbe2 : 0x9fc0ff;
+        const disc = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.discTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+        disc.position.set(p[0], p[1], p[2]);
+        disc.scale.setScalar(size);
+        this.bodyGroup.add(disc);
+      }
       const lab = makeTextSprite(b.name, b.kind === "host_star" ? "#ffe08a" : "#c8d2e0");
       lab.position.set(p[0], p[1], p[2]);
       this.bodyGroup.add(lab);
     }
+  }
+
+  /** Canonical moon-phase disc (lit hemisphere toward +x), cached per 5%% illumination
+   *  bucket; the sprite is rotated at render time so the lit side faces the host star. */
+  private phaseTexture(bucket: number): THREE.Texture {
+    const cached = this.phaseTexCache.get(bucket);
+    if (cached) return cached;
+    const frac = Math.max(0, Math.min(1, bucket / 20));
+    const S = 64, c = document.createElement("canvas");
+    c.width = c.height = S;
+    const g = c.getContext("2d")!;
+    const cx = S / 2, cy = S / 2, rad = S / 2 - 2;
+    g.fillStyle = "rgba(150,160,178,0.13)"; // dark side, faint (earthshine)
+    g.beginPath(); g.arc(cx, cy, rad, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(226,230,238,1)";    // sunlit side
+    g.beginPath();
+    g.arc(cx, cy, rad, -Math.PI / 2, Math.PI / 2, false); // the sun-facing (right) limb
+    const rx = rad * (1 - 2 * frac);                       // terminator ellipse (signed)
+    g.ellipse(cx, cy, Math.abs(rx), rad, 0, Math.PI / 2, -Math.PI / 2, rx > 0);
+    g.fill();
+    const tex = new THREE.CanvasTexture(c);
+    this.phaseTexCache.set(bucket, tex);
+    return tex;
   }
 
   /** On-sky tracks for bodies (B4): where each body travels over a span. Each polyline is
@@ -665,6 +704,19 @@ export class StarField {
       const hit = this.ray.intersectObject(this.points, false)[0];
       const idx = hit ? hit.index ?? null : null;
       if (idx !== this.hoverIndex) { this.hoverIndex = idx; this.onHover?.(idx); }
+    }
+    // orient each moon's phase so its lit limb faces the host star, in screen space
+    if (this.moonPhases.length) {
+      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+      const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+      for (const mp of this.moonPhases) {
+        if (!mp.sunDir) continue;
+        const m = this.projectScene(mp.dir), s = this.projectScene(mp.sunDir);
+        if (!m || !s) continue;
+        const dx = s[0] - m[0], dy = s[1] - m[1], dz = s[2] - m[2];
+        (mp.sprite.material as THREE.SpriteMaterial).rotation =
+          Math.atan2(dx * up.x + dy * up.y + dz * up.z, dx * right.x + dy * right.y + dz * right.z);
+      }
     }
     this.renderer.render(this.scene, cam);
   };

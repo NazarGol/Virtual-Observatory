@@ -185,7 +185,7 @@ export function App() {
   // All bodies of the observed world (host star, moons, siblings), updated every frame.
   const allBodies = useMemo(() => (worldVantage ? worldBodies(worldVantage.world, tYears) : []), [worldVantage, tYears]);
   const bodyMarkers = useMemo(
-    () => allBodies.map((b) => ({ dir: b.direction_icrs as Vec3, name: b.name, kind: b.kind, diamDeg: b.angularDiameterDeg })),
+    () => allBodies.map((b) => ({ dir: b.direction_icrs as Vec3, name: b.name, kind: b.kind, diamDeg: b.angularDiameterDeg, illum: b.illuminatedFraction })),
     [allBodies],
   );
   // host-star glare: the sun (host star) washes out nearby stars when it is above the horizon.
