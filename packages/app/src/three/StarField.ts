@@ -643,7 +643,8 @@ export class StarField {
       if (!p) continue;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringTex, transparent: true, depthWrite: false }));
       sp.position.set(p[0], p[1], p[2]);
-      sp.scale.setScalar(this.mode === "gnomonic" ? 6 : 5);
+      const base = this.mode === "gnomonic" ? 6 : 5;
+      sp.userData.base = base; sp.scale.setScalar(base);
       this.selGroup.add(sp);
     }
   }
@@ -718,6 +719,11 @@ export class StarField {
         (mp.sprite.material as THREE.SpriteMaterial).rotation =
           Math.atan2(dx * up.x + dy * up.y + dz * up.z, dx * right.x + dy * right.y + dz * right.z);
       }
+    }
+    // gentle breathing pulse on selection rings (subtle motion, no bounce)
+    if (this.selGroup.children.length) {
+      const k = 1 + 0.11 * Math.sin(performance.now() * 0.005);
+      for (const c of this.selGroup.children) c.scale.setScalar(((c.userData.base as number) || 6) * k);
     }
     this.renderer.render(this.scene, cam);
   };

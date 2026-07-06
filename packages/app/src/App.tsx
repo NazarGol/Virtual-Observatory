@@ -21,6 +21,8 @@ import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry, milkyWayBand } from "./milkyway";
 import { comovingCandidates, anomalyCandidates, alignmentCandidates, candidatesFromStar, type Candidate } from "./analysis";
+import { shortcutFor, SHORTCUTS, type KbAction } from "./keyboard";
+import { setSoundEnabled, uiTick, uiSelect, uiClack, chime } from "./sound";
 import { geodesicArc, SENSORS, type StarPoint, type Sensor } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1", survey: "vobs.survey.v1" };
@@ -169,6 +171,8 @@ export function App() {
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
   const [ctlOpen, setCtlOpen] = useState(true);
+  const [showHelp, setShowHelp] = useState(false);
+  const [sound, setSound] = useState(false);
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
   const [notebook, setNotebook] = useState<Notebook>(() => loadJSON(KEY.note, parseNotebook, emptyNotebook()));
@@ -237,6 +241,21 @@ export function App() {
 
   // Jump to an absolute time (markers/notes/events): put it on the epoch axis, local at 0.
   const goTo = (t: number) => { setEpochYears(t); setLocalYears(0); };
+
+  // Keyboard control (Gate C). The dispatcher is reassigned each render (fresh closure over
+  // state); the listener is mounted once and reads it through a ref. Ignored while typing.
+  const dispatchRef = useRef<(a: KbAction) => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const a = shortcutFor(e.key);
+      if (a) { e.preventDefault(); dispatchRef.current(a); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => { localStorage.setItem(KEY.meas, serializeMeasurements(measurements)); }, [measurements]);
   useEffect(() => { localStorage.setItem(KEY.annot, serializeAnnotations(annotations)); }, [annotations]);
@@ -356,6 +375,7 @@ export function App() {
     setCandidates(cs);
     setHighlightIds(new Set(cs.filter((c) => c.kind === "co-moving").flatMap((c) => c.objectIds)));
     setCandScanned(true);
+    if (cs.length) chime();
   };
   const findCandidates = () => {
     if (!sky) return;
@@ -482,6 +502,27 @@ export function App() {
       id: uid(), designation, objectId: focusId, raDeg: raOf(focusDir), decDeg: decOf(focusDir),
       mag: focusMeta.mag, sensor, atYears: tYears, note: "", createdAtYears: tYears,
     }]);
+    chime();
+  };
+
+  // Wire the keyboard action ids to handlers (sound calls no-op when audio is off).
+  dispatchRef.current = (a: KbAction) => {
+    switch (a.kind) {
+      case "sensor": setSensor(a.sensor); uiSelect(); break;
+      case "projection": { const nx: Projection = projection === "gnomonic" ? "fisheye" : projection === "fisheye" ? "dome" : "gnomonic"; setProjection(nx); uiTick(); break; }
+      case "zoom": nudgeFov(a.dir === 1 ? 1 / 1.4 : 1.4); break;
+      case "playLocal": setLocalPlaying((p) => !p); uiClack(); break;
+      case "playEpoch": setEpochPlaying((p) => !p); uiClack(); break;
+      case "stepLocal": setLocalYears((v) => v + a.dir * localScale * 0.1); break;
+      case "milkyway": setShowMilkyWay((v) => !v); uiTick(); break;
+      case "trails": if (worldVantage) { setBodyTrails((v) => !v); uiTick(); } break;
+      case "gallery": setView("gallery"); break;
+      case "escape": if (view === "gallery") setView("instrument"); else if (showHelp) setShowHelp(false); else setSelection([]); break;
+      case "record": recordSurvey(); break;
+      case "propose": if (selection.length === 1) findFromStar(selection[0]!); break;
+      case "controls": setCtlOpen((o) => !o); uiTick(); break;
+      case "help": setShowHelp((h) => !h); uiTick(); break;
+    }
   };
 
   const cap = PROPAGATION_MODELS.rectilinear.honestCapYears;
@@ -501,6 +542,7 @@ export function App() {
         <ArrivalCard clock={worldClock} hostLabel={worldVantage.label} distPc={Math.hypot(...worldVantage.pos)}
           world={worldVantage.world} onClose={() => setShowArrival(false)} />
       )}
+      {showHelp && <KbHelp onClose={() => setShowHelp(false)} />}
       {speculative && (
         <div className="speculative">
           ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)}. Beyond the rectilinear model's validated range; these
@@ -527,9 +569,11 @@ export function App() {
             setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
             worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
             fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
-            showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
-            bodyTrails={bodyTrails} onBodyTrails={() => setBodyTrails((v) => !v)} observing={!!worldVantage}
-            sensor={sensor} onSensor={setSensor}
+            showMilkyWay={showMilkyWay} onMilkyWay={() => { setShowMilkyWay((v) => !v); uiTick(); }}
+            bodyTrails={bodyTrails} onBodyTrails={() => { setBodyTrails((v) => !v); uiTick(); }} observing={!!worldVantage}
+            sound={sound} onSound={() => { const on = !sound; setSound(on); setSoundEnabled(on); uiTick(); }}
+            onHelp={() => setShowHelp(true)}
+            sensor={sensor} onSensor={(s) => { setSensor(s); uiSelect(); }}
             projection={projection} onProjection={setProjection}
             selection={selection} draft={draft}
             onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
@@ -550,7 +594,7 @@ export function App() {
         </Section>
         <Section title="Event scanner" meta={worldVantage ? scan?.events.length ?? "" : "world only"}>
           <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
-            onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => goTo(t)} />
+            onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => { goTo(t); chime(); }} />
         </Section>
         <Section title="Measurements" meta={results.length || null}>
           <Measurements results={results} metaById={metaById}
@@ -597,6 +641,7 @@ function Toolbar(props: {
   fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
   showMilkyWay: boolean; onMilkyWay: () => void;
   bodyTrails: boolean; onBodyTrails: () => void; observing: boolean;
+  sound: boolean; onSound: () => void; onHelp: () => void;
   sensor: Sensor; onSensor: (s: Sensor) => void;
   projection: Projection; onProjection: (p: Projection) => void;
   selection: string[]; draft: string[];
@@ -657,6 +702,12 @@ function Toolbar(props: {
         <span className="btns">
           {(["gnomonic", "fisheye", "dome"] as Projection[]).map((p) =>
             <button key={p} className={props.projection === p ? "active" : ""} onClick={() => props.onProjection(p)}>{p === "gnomonic" ? "flat" : p}</button>)}
+        </span>
+      </div>
+      <div className="row" style={{ marginTop: 6 }}><span className="k">audio · keys</span>
+        <span className="btns">
+          <button className={props.sound ? "active" : ""} onClick={props.onSound} title="toggle instrument sound">{props.sound ? "sound on" : "sound off"}</button>
+          <button onClick={props.onHelp} title="keyboard shortcuts (press ?)">⌨ keys</button>
         </span>
       </div>
       <div className="muted" style={{ marginTop: 8 }}>tools</div>
@@ -833,6 +884,21 @@ function TimeControl(props: {
       </select>
       <button onClick={() => props.setValue(0)} title="reset this clock to now">now</button>
       {props.right}
+    </div>
+  );
+}
+
+/** Keyboard-shortcuts overlay (Gate C). */
+function KbHelp(props: { onClose: () => void }) {
+  return (
+    <div className="kbhelp" onClick={props.onClose}>
+      <div className="card" onClick={(e) => e.stopPropagation()}>
+        <h3>Keyboard <button className="x" onClick={props.onClose}>×</button></h3>
+        {SHORTCUTS.map((s) => (
+          <div key={s.keys} className="kbrow"><span className="k">{s.keys}</span><span className="l">{s.label}</span></div>
+        ))}
+        <div className="hint">Shortcuts pause while a text field is focused. Press ? or Esc to close.</div>
+      </div>
     </div>
   );
 }

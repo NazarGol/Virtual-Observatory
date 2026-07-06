@@ -169,3 +169,27 @@ input[type=range] { accent-color: var(--accent); }
 .preal, .pgen { display: inline-block; min-width: 26px; text-align: center; border-radius: 2px; font-size: 9px;
   font-weight: 700; text-transform: uppercase; padding: 0 3px; margin-right: 3px; }
 .preal { background: rgba(111,185,138,.16); color: var(--good); } .pgen { background: rgba(217,164,65,.16); color: var(--warn); }
+
+/* ============================================================================
+   Motion & polish (Gate C) — restrained: short eases, gentle fades, no bounce.
+   ============================================================================ */
+@keyframes vo-fade-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.secbody, .ctl, .legend { animation: vo-fade-in .15s ease both; }
+.arrival { animation: vo-fade-in .24s ease both; }
+.sec > .sechead .caret { transition: color .12s; }
+button:focus-visible, select:focus-visible, input:focus-visible, .link:focus-visible {
+  outline: 2px solid var(--accent-dim); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+/* keyboard-shortcuts overlay */
+.kbhelp { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+  background: rgba(6,7,9,.72); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: vo-fade-in .16s ease; }
+.kbhelp .card { width: min(540px, 92%); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 16px 20px; }
+.kbhelp h3 { margin: 0 0 13px; font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center; }
+.kbrow { display: flex; gap: 16px; padding: 4px 0; align-items: baseline; }
+.kbrow .k { min-width: 78px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.kbrow .l { color: var(--ink-dim); }
+.kbhelp .hint { margin-top: 13px; color: var(--faint); font-size: 11px; }
