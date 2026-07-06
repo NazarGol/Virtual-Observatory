@@ -188,6 +188,7 @@ export class StarField {
     this.scene.add(this.eqLine);
 
     this.updateOrtho();
+    this.updateViewBasis(); // init the fisheye basis up front so it's never stale on entry
     this.applyLook();
     this.bind();
     this.loop();
