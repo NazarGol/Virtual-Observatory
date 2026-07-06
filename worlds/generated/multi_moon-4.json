@@ -2,7 +2,7 @@
   "schema_version": "0.1",
   "name": "multi moon #4",
   "world_type": "multi_moon",
-  "age_gyr": 2.890558198094368,
+  "age_gyr": 6.018398327752948,
   "seed": 3479801388,
   "host_star": {
     "catalog_id": "Gaia DR3 1384195086792268800",
@@ -22,17 +22,17 @@
     "radius_rsun": 1.3461932658396625
   },
   "planet": {
-    "radius_km": 5075.240345671773,
-    "mass_mearth": 2.265543004823849,
-    "rotation_period_s": 93594.32413727045,
-    "axial_tilt_deg": 11.090448293834925,
+    "radius_km": 5643.560534343123,
+    "mass_mearth": 1.6938613422680646,
+    "rotation_period_s": 68872.95915596187,
+    "axial_tilt_deg": 28.576742294244468,
     "north_pole_inertial": {
       "ra_deg": 0,
-      "dec_deg": 78.90955170616508
+      "dec_deg": 61.42325770575553
     },
     "orbit": {
-      "a_au": 3.5590943489169042,
-      "e": 0.043706687982194126,
+      "a_au": 2.504949462162203,
+      "e": 0.023778027947992088,
       "i_deg": 0,
       "Omega_deg": 0,
       "omega_deg": 0,
@@ -43,43 +43,29 @@
   "moons": [
     {
       "name": "moon a",
-      "radius_km": 1830.092850048095,
-      "albedo": 0.2721444639936089,
+      "radius_km": 704.8486899584532,
+      "albedo": 0.27296566758770496,
       "orbit": {
-        "a_au": 0.00036561654008844026,
-        "e": 0.0020941090187989175,
-        "i_deg": 2.527129779336974,
-        "Omega_deg": 88.77178229391575,
-        "omega_deg": 215.20171989686787,
-        "M0_deg": 114.43710434250534,
+        "a_au": 0.00023103443610028555,
+        "e": 0.07634729567915201,
+        "i_deg": 9.129083465784788,
+        "Omega_deg": 202.86463131196797,
+        "omega_deg": 5.703388145193458,
+        "M0_deg": 49.99115042388439,
         "epoch_jd": 2451545
       }
     },
     {
       "name": "moon b",
-      "radius_km": 1843.9439612440765,
-      "albedo": 0.0646208181604743,
+      "radius_km": 583.6865028366446,
+      "albedo": 0.1110514446021989,
       "orbit": {
-        "a_au": 0.0008171704581422539,
-        "e": 0.02504238239256665,
-        "i_deg": 2.364506256999448,
-        "Omega_deg": 124.99267816543579,
-        "omega_deg": 223.75641985796392,
-        "M0_deg": 332.0628584828228,
-        "epoch_jd": 2451545
-      }
-    },
-    {
-      "name": "moon c",
-      "radius_km": 1207.3835019022226,
-      "albedo": 0.16226305441930888,
-      "orbit": {
-        "a_au": 0.001815333185329959,
-        "e": 0.023265548057388515,
-        "i_deg": 3.345200939802453,
-        "Omega_deg": 152.09959410130978,
-        "omega_deg": 260.7003517728299,
-        "M0_deg": 158.53045701049268,
+        "a_au": 0.00036674430690647307,
+        "e": 0.0107850256934762,
+        "i_deg": 13.183528900146484,
+        "Omega_deg": 59.765075566247106,
+        "omega_deg": 116.10915647819638,
+        "M0_deg": 46.006073635071516,
         "epoch_jd": 2451545
       }
     }
@@ -119,24 +105,59 @@
       "note": "derived: Teff = Tsun*(L/R^2)^0.25, consistent with L and R"
     },
     "planet.orbit.a_au": {
-      "value": 3.5591,
+      "value": 2.5049,
       "note": "sampled near the host's habitable zone"
     },
     "planet.orbit.e": {
-      "value": 0.0437,
+      "value": 0.0238,
       "note": "sampled for a multi moon world"
     },
     "planet.axial_tilt_deg": {
-      "value": 11.0904,
+      "value": 28.5767,
       "note": "sampled"
     },
     "planet.rotation_period_s": {
-      "value": 93594,
+      "value": 68873,
       "note": "sampled"
     },
     "moons": {
-      "value": 3,
-      "note": "each moon Roche < a < 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
+      "value": 2,
+      "note": "near-2:1 resonant chain (Laplace-type: recurring multi-moon alignments); inclined orbits -> eclipse seasons; adjacent moons mutually Hill-stable"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.024"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 2.445 AU > 0.0313 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00021 > Roche 0.00015; apo 0.00025 < 0.01056 AU"
+      },
+      {
+        "name": "moon moon b: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00036 > Roche 0.00015; apo 0.00037 < 0.01056 AU"
+      },
+      {
+        "name": "moons moon a/moon b mutually Hill-stable",
+        "ok": true,
+        "detail": "Delta=7.44 (>3.5)"
+      },
+      {
+        "name": ">= 2 moons",
+        "ok": true,
+        "detail": "2 moons"
+      }
+    ]
   }
 }

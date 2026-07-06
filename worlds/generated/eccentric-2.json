@@ -40,7 +40,22 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1625.3344937227666,
+      "albedo": 0.1318657448515296,
+      "orbit": {
+        "a_au": 0.00024302354439436372,
+        "e": 0.11367801341693848,
+        "i_deg": 16.907666508108377,
+        "Omega_deg": 134.90701460279524,
+        "omega_deg": 323.9231327176094,
+        "M0_deg": 126.93307592533529,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +105,35 @@
     "planet.rotation_period_s": {
       "value": 56978,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 1,
+      "note": "eccentric moon: apparent size cycles over the orbit; periapsis clears Roche (checked at a(1-e))"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.576"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 0.755 AU > 0.0232 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00022 > Roche 0.00013; apo 0.00027 < 0.00714 AU"
+      },
+      {
+        "name": "high eccentricity",
+        "ok": true,
+        "detail": "e=0.576"
+      }
+    ]
   }
 }

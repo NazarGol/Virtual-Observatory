@@ -40,7 +40,22 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1105.0407515838742,
+      "albedo": 0.1017708646832034,
+      "orbit": {
+        "a_au": 0.0003571951438657077,
+        "e": 0.05550115467049182,
+        "i_deg": 5.773851077770814,
+        "Omega_deg": 352.2285532671958,
+        "omega_deg": 226.5026361029595,
+        "M0_deg": 297.10363056510687,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +105,50 @@
     "planet.rotation_period_s": {
       "value": 129478,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 1,
+      "note": "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.042"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 0.617 AU > 0.0194 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00034 > Roche 0.00013; apo 0.00038 < 0.00278 AU"
+      },
+      {
+        "name": "in habitable zone",
+        "ok": true,
+        "detail": "a=0.644 in [0.638, 0.919] AU"
+      },
+      {
+        "name": "low eccentricity",
+        "ok": true,
+        "detail": "e=0.042"
+      },
+      {
+        "name": "sane obliquity",
+        "ok": true,
+        "detail": "32.3 deg"
+      },
+      {
+        "name": "has a day (not tide-locked)",
+        "ok": true,
+        "detail": "tau_lock 1.87e+1 Gyr > age 5.429481465369463 Gyr"
+      }
+    ]
   }
 }

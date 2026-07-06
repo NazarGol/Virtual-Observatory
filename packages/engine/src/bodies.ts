@@ -88,12 +88,27 @@ export interface ApparentBody {
   distance_au: number;
   /** Apparent angular diameter (degrees), from the body's physical radius and its distance. */
   angularDiameterDeg: number;
+  /** Sunlit fraction of the disc seen by the observer, 0 (new) .. 1 (full) — moon phase. */
+  illuminatedFraction: number;
+  /** Sun–body–observer phase angle in degrees (0 = full, 180 = new). */
+  phaseAngleDeg: number;
   horizontal: HorizontalCoord;
 }
 
 function unit(v: Vec3): { dir: Vec3; dist: number } {
   const d = norm(v);
   return { dir: scale(v, 1 / d), dist: d };
+}
+
+/** Sunlit fraction + phase angle of a body, from its position and the host star's position,
+ *  both relative to the observer. Phase angle is the Sun–body–observer angle. */
+function illumination(bodyRelObs: Vec3, sunRelObs: Vec3): { frac: number; phaseDeg: number } {
+  const toObs = scale(bodyRelObs, -1);
+  const toSun = sub(sunRelObs, bodyRelObs);
+  const a = norm(toObs), b = norm(toSun);
+  if (a < 1e-12 || b < 1e-12) return { frac: 1, phaseDeg: 0 };
+  const c = Math.max(-1, Math.min(1, (toObs[0] * toSun[0] + toObs[1] * toSun[1] + toObs[2] * toSun[2]) / (a * b)));
+  return { frac: (1 + c) / 2, phaseDeg: (Math.acos(c) * 180) / Math.PI };
 }
 
 /**
@@ -112,32 +127,36 @@ export function worldBodies(world: World, tYears: number): ApparentBody[] {
   const hostMass = world.host_star.mass_msun;
   const planetMassMsun = world.planet.mass_mearth / MEARTH_PER_MSUN;
   const planetPos = keplerPosition(world.planet.orbit, hostMass, tYears); // rel host
+  const sunRelObs = scale(planetPos, -1); // host star relative to the observer (planet)
 
   const bodies: ApparentBody[] = [];
 
   // Host star, seen from the planet.
   {
-    const { dir, dist } = unit(scale(planetPos, -1));
+    const { dir, dist } = unit(sunRelObs);
     bodies.push({
       name: world.host_star.catalog_id ?? "host star",
       kind: "host_star",
       direction_icrs: dir,
       distance_au: dist,
       angularDiameterDeg: angDiamDeg(world.host_star.radius_rsun * RSUN_AU, dist),
+      illuminatedFraction: 1, phaseAngleDeg: 0,
       horizontal: toHorizon(dir),
     });
   }
 
-  // Moons, orbiting the planet.
+  // Moons, orbiting the planet — lit by the host star (phase from the geometry).
   for (const moon of world.moons ?? []) {
     const m = keplerPosition(moon.orbit, planetMassMsun, tYears);
     const { dir, dist } = unit(m);
+    const ill = illumination(m, sunRelObs);
     bodies.push({
       name: moon.name,
       kind: "moon",
       direction_icrs: dir,
       distance_au: dist,
       angularDiameterDeg: angDiamDeg(moon.radius_km / KM_PER_AU, dist),
+      illuminatedFraction: ill.frac, phaseAngleDeg: ill.phaseDeg,
       horizontal: toHorizon(dir),
     });
   }
@@ -148,13 +167,16 @@ export function worldBodies(world: World, tYears: number): ApparentBody[] {
     .siblings;
   for (const sib of siblings ?? []) {
     const s = keplerPosition(sib.orbit, hostMass, tYears);
-    const { dir, dist } = unit(sub(s, planetPos));
+    const sRel = sub(s, planetPos);
+    const { dir, dist } = unit(sRel);
+    const ill = illumination(sRel, sunRelObs);
     bodies.push({
       name: sib.name,
       kind: "sibling_planet",
       direction_icrs: dir,
       distance_au: dist,
       angularDiameterDeg: angDiamDeg((sib.radius_km ?? 6371) / KM_PER_AU, dist),
+      illuminatedFraction: ill.frac, phaseAngleDeg: ill.phaseDeg,
       horizontal: toHorizon(dir),
     });
   }

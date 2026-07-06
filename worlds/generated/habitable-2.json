@@ -40,7 +40,36 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1159.0944931842387,
+      "albedo": 0.2775942267663777,
+      "orbit": {
+        "a_au": 0.00029348034719927534,
+        "e": 0.031163036799989642,
+        "i_deg": 10.539702080190182,
+        "Omega_deg": 222.81846553087234,
+        "omega_deg": 340.3876642975956,
+        "M0_deg": 181.30676904693246,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon b",
+      "radius_km": 1558.3383817225695,
+      "albedo": 0.23765360633842647,
+      "orbit": {
+        "a_au": 0.0007024347526431783,
+        "e": 0.029419179353863,
+        "i_deg": 5.9397762808948755,
+        "Omega_deg": 343.4665953274816,
+        "omega_deg": 295.4806753434241,
+        "M0_deg": 293.7852306570858,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +119,60 @@
     "planet.rotation_period_s": {
       "value": 122143,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 2,
+      "note": "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.017"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 0.933 AU > 0.0202 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00028 > Roche 0.00013; apo 0.00030 < 0.00402 AU"
+      },
+      {
+        "name": "moon moon b: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00068 > Roche 0.00013; apo 0.00072 < 0.00402 AU"
+      },
+      {
+        "name": "moons moon a/moon b mutually Hill-stable",
+        "ok": true,
+        "detail": "Delta=5.29 (>3.5)"
+      },
+      {
+        "name": "in habitable zone",
+        "ok": true,
+        "detail": "a=0.948 in [0.701, 1.010] AU"
+      },
+      {
+        "name": "low eccentricity",
+        "ok": true,
+        "detail": "e=0.017"
+      },
+      {
+        "name": "sane obliquity",
+        "ok": true,
+        "detail": "9.3 deg"
+      },
+      {
+        "name": "has a day (not tide-locked)",
+        "ok": true,
+        "detail": "tau_lock 1.71e+2 Gyr > age 2.781555712223053 Gyr"
+      }
+    ]
   }
 }

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { keplerPosition, solveKepler, worldBodies } from "../src/bodies.js";
 import { norm } from "../src/vec.js";
-import type { KeplerElements } from "../src/world.js";
+import type { KeplerElements, World } from "../src/world.js";
 import { loadSolWorld } from "./helpers.js";
 
 const J2000_JD = 2451545.0;
@@ -25,6 +25,26 @@ test("Kepler's equation is solved: E - e*sin(E) == M", () => {
       assert.ok(Math.abs(wrapped) < 1e-12, `e=${e} M=${M}: residual ${wrapped}`);
     }
   }
+});
+
+test("moon phase: full when opposite the sun, new when between planet and sun", () => {
+  // planet at M0=0 sits at (+a,0,0), so the host lies at -x from the planet.
+  const world = {
+    schema_version: "0.1", name: "phase-test",
+    host_star: { catalog_id: "H", galactic_xyz_pc: [0, 0, 0], space_velocity_kms: [0, 0, 0], mass_msun: 1, luminosity_lsun: 1, teff_k: 5772, radius_rsun: 1 },
+    planet: { radius_km: 6371, mass_mearth: 1, rotation_period_s: 86400, axial_tilt_deg: 0, north_pole_inertial: { ra_deg: 0, dec_deg: 90 }, orbit: el({ a_au: 1 }) },
+    moons: [
+      { name: "far", radius_km: 1000, albedo: 0.2, orbit: el({ a_au: 0.002, M0_deg: 0 }) },   // beyond the planet from the sun -> full
+      { name: "near", radius_km: 1000, albedo: 0.2, orbit: el({ a_au: 0.003, M0_deg: 180 }) }, // between planet and sun -> new
+    ],
+    observer: { lat_deg: 0, lon_deg: 0, elevation_m: 0 }, epoch_jd: J2000_JD, catalog_ref: "x",
+  } as unknown as World;
+  const bodies = worldBodies(world, 0);
+  const far = bodies.find((b) => b.name === "far")!, near = bodies.find((b) => b.name === "near")!;
+  assert.ok(Math.abs(far.illuminatedFraction - 1) < 0.02, `far moon should read full (${far.illuminatedFraction.toFixed(3)})`);
+  assert.ok(near.illuminatedFraction < 0.02, `near moon should read new (${near.illuminatedFraction.toFixed(3)})`);
+  assert.equal(bodies.find((b) => b.kind === "host_star")!.illuminatedFraction, 1);
+  console.log(`  [bodies] moon phase full=${far.illuminatedFraction.toFixed(2)} new=${near.illuminatedFraction.toFixed(2)}`);
 });
 
 test("periapsis and apoapsis distances are a(1-e) and a(1+e)", () => {

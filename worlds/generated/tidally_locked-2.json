@@ -40,7 +40,22 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1892.1843030489981,
+      "albedo": 0.07378178746439516,
+      "orbit": {
+        "a_au": 0.000322988511440928,
+        "e": 0.10878807295812294,
+        "i_deg": 18.391997998580337,
+        "Omega_deg": 305.6459782831371,
+        "omega_deg": 221.2699486501515,
+        "M0_deg": 69.39420131966472,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +105,40 @@
     "planet.rotation_period_s": {
       "value": 3610454,
       "note": "= orbital period: spin-orbit synchronous (Kepler from a and host mass)"
+    },
+    "moons": {
+      "value": 1,
+      "note": "a single moon is often the only moving body under a fixed sun; inclined orbit -> eclipse seasons; periapsis clears Roche"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.002"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 0.217 AU > 0.0191 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00029 > Roche 0.00013; apo 0.00036 < 0.00094 AU"
+      },
+      {
+        "name": "locking is expected (tau < age)",
+        "ok": true,
+        "detail": "tau_lock 2.84e-2 Gyr < age 7.138346461579204 Gyr"
+      },
+      {
+        "name": "spin synchronized (Prot = Porb)",
+        "ok": true,
+        "detail": "Prot=41.79 d, Porb=41.79 d"
+      }
+    ]
   }
 }

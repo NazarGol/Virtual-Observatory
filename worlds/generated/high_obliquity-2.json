@@ -40,7 +40,22 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 929.7054026275873,
+      "albedo": 0.2813098513754085,
+      "orbit": {
+        "a_au": 0.000326940840599171,
+        "e": 0.11772296213312074,
+        "i_deg": 20.050864974968135,
+        "Omega_deg": 203.1932647805661,
+        "omega_deg": 188.1456331629306,
+        "M0_deg": 19.931864915415645,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +105,35 @@
     "planet.rotation_period_s": {
       "value": 75181,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 1,
+      "note": "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.056"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 2.503 AU > 0.0319 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00029 > Roche 0.00013; apo 0.00037 < 0.00930 AU"
+      },
+      {
+        "name": "extreme obliquity (>45 deg)",
+        "ok": true,
+        "detail": "52.1 deg"
+      }
+    ]
   }
 }

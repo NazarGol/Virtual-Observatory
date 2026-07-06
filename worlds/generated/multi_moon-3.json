@@ -23,16 +23,16 @@
   },
   "planet": {
     "radius_km": 7287.853048183024,
-    "mass_mearth": 1.3686429132707418,
-    "rotation_period_s": 58225.3550587222,
-    "axial_tilt_deg": 10.064756346400827,
+    "mass_mearth": 2.146185128716752,
+    "rotation_period_s": 63862.612906470895,
+    "axial_tilt_deg": 1.7805622075684369,
     "north_pole_inertial": {
       "ra_deg": 0,
-      "dec_deg": 79.93524365359917
+      "dec_deg": 88.21943779243156
     },
     "orbit": {
       "a_au": 1.1692907934038117,
-      "e": 0.013355766772292554,
+      "e": 0.01429542973637581,
       "i_deg": 0,
       "Omega_deg": 0,
       "omega_deg": 0,
@@ -43,12 +43,12 @@
   "moons": [
     {
       "name": "moon a",
-      "radius_km": 1695.7180824130774,
-      "albedo": 0.16581202525645494,
+      "radius_km": 959.0209767222404,
+      "albedo": 0.10859175698366016,
       "orbit": {
-        "a_au": 0.0002236883353882055,
-        "e": 0.017213286627084014,
-        "i_deg": 0.9344568650703877,
+        "a_au": 0.0002608495484185557,
+        "e": 0.059714538827538494,
+        "i_deg": 9.054135017096996,
         "Omega_deg": 322.63035206124187,
         "omega_deg": 233.53592223487794,
         "M0_deg": 291.92128549329937,
@@ -57,15 +57,15 @@
     },
     {
       "name": "moon b",
-      "radius_km": 1971.5203689411283,
-      "albedo": 0.2832426010072231,
+      "radius_km": 1244.1420033574104,
+      "albedo": 0.29979404063895343,
       "orbit": {
-        "a_au": 0.0005573144013100957,
-        "e": 0.027668543150648473,
-        "i_deg": 1.3954873697366565,
-        "Omega_deg": 81.6499931551516,
-        "omega_deg": 243.74045591801405,
-        "M0_deg": 102.92709410190582,
+        "a_au": 0.00041407284756504514,
+        "e": 0.06759740132838488,
+        "i_deg": 17.62027158588171,
+        "Omega_deg": 100.47509062103927,
+        "omega_deg": 81.6499931551516,
+        "M0_deg": 243.74045591801405,
         "epoch_jd": 2451545
       }
     }
@@ -109,20 +109,55 @@
       "note": "sampled near the host's habitable zone"
     },
     "planet.orbit.e": {
-      "value": 0.0134,
+      "value": 0.0143,
       "note": "sampled for a multi moon world"
     },
     "planet.axial_tilt_deg": {
-      "value": 10.0648,
+      "value": 1.7806,
       "note": "sampled"
     },
     "planet.rotation_period_s": {
-      "value": 58225,
+      "value": 63863,
       "note": "sampled"
     },
     "moons": {
       "value": 2,
-      "note": "each moon Roche < a < 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
+      "note": "near-2:1 resonant chain (Laplace-type: recurring multi-moon alignments); inclined orbits -> eclipse seasons; adjacent moons mutually Hill-stable"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.014"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 1.153 AU > 0.0243 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00025 > Roche 0.00016; apo 0.00028 < 0.00592 AU"
+      },
+      {
+        "name": "moon moon b: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00039 > Roche 0.00016; apo 0.00044 < 0.00592 AU"
+      },
+      {
+        "name": "moons moon a/moon b mutually Hill-stable",
+        "ok": true,
+        "detail": "Delta=4.67 (>3.5)"
+      },
+      {
+        "name": ">= 2 moons",
+        "ok": true,
+        "detail": "2 moons"
+      }
+    ]
   }
 }

@@ -40,7 +40,36 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1843.8047785311937,
+      "albedo": 0.23892180597875268,
+      "orbit": {
+        "a_au": 0.0003003545742792139,
+        "e": 0.043908039398957044,
+        "i_deg": 2.440971774980426,
+        "Omega_deg": 54.73059640266001,
+        "omega_deg": 77.11150196380913,
+        "M0_deg": 82.3274261970073,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon b",
+      "radius_km": 887.4359547160566,
+      "albedo": 0.13002151164226233,
+      "orbit": {
+        "a_au": 0.0006985025856732193,
+        "e": 0.031317371421027924,
+        "i_deg": 19.712463254109025,
+        "Omega_deg": 353.71124647557735,
+        "omega_deg": 309.30285830050707,
+        "M0_deg": 69.35835988260806,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +119,55 @@
     "planet.rotation_period_s": {
       "value": 64563,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 2,
+      "note": "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.051"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 24.749 AU > 0.0173 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00029 > Roche 0.00013; apo 0.00031 < 0.11803 AU"
+      },
+      {
+        "name": "moon moon b: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00068 > Roche 0.00013; apo 0.00072 < 0.11803 AU"
+      },
+      {
+        "name": "moons moon a/moon b mutually Hill-stable",
+        "ok": true,
+        "detail": "Delta=4.70 (>3.5)"
+      },
+      {
+        "name": "beyond the outer HZ (cold)",
+        "ok": true,
+        "detail": "a=26.07 > HZ_outer 0.72 AU"
+      },
+      {
+        "name": "dim sun (flux < 0.3 S_earth)",
+        "ok": true,
+        "detail": "S=4.02e-4 S_earth"
+      },
+      {
+        "name": "not ejected (a < 200 AU, bound)",
+        "ok": true,
+        "detail": "a=26.1 AU"
+      }
+    ]
   }
 }

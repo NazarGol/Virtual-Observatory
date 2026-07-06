@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   generateGallery, generateWorld, validateWorld, mulberry32,
-  tidalLockTimescaleYears, WORLD_TYPES, type GeneratedWorld,
+  tidalLockTimescaleYears, rocheLimitAU, WORLD_TYPES, type GeneratedWorld,
 } from "../src/worldgen.js";
 
 test("every generated world passes its own type's physics regime", () => {
@@ -68,6 +68,45 @@ test("validators REJECT physics violations (weird != unvalidated)", () => {
   const cold: GeneratedWorld = structuredClone(hab);
   cold.planet.orbit.a_au *= 10;
   assert.equal(validateWorld(cold).ok, false);
+});
+
+test("moons are common across ALL world types, and inclined (eclipse seasons)", () => {
+  let withMoons = 0, total = 0, allInclined = true;
+  for (const t of WORLD_TYPES) {
+    for (let s = 0; s < 4; s++) {
+      const w = generateWorld(t, mulberry32(200 + s), 1);
+      total++;
+      if (w.moons.length > 0) {
+        withMoons++;
+        for (const m of w.moons) if (!(m.orbit.i_deg > 0)) allInclined = false;
+      }
+    }
+  }
+  assert.ok(withMoons / total > 0.6, `moons should be common across types (got ${withMoons}/${total})`);
+  assert.ok(allInclined, "every moon should carry nonzero inclination (for eclipse seasons)");
+  console.log(`  [worldgen] ${withMoons}/${total} sampled worlds have moons; all inclined`);
+});
+
+test("multi-moon systems form near-2:1 resonant chains (recurring alignments)", () => {
+  const w = generateWorld("multi_moon", mulberry32(11), 1);
+  assert.ok(w.moons.length >= 2, "multi-moon needs >= 2 moons");
+  const a = w.moons.map((m) => m.orbit.a_au).sort((x, y) => x - y);
+  for (let i = 1; i < a.length; i++) {
+    const pRatio = (a[i]! / a[i - 1]!) ** 1.5; // P ∝ a^1.5
+    assert.ok(Math.abs(pRatio - 2) < 0.15, `adjacent period ratio ${pRatio.toFixed(2)} is not ~2:1`);
+  }
+});
+
+test("Roche check uses PERIAPSIS: an eccentric moon dipping inside Roche at periapsis is rejected", () => {
+  const w = generateWorld("multi_moon", mulberry32(13), 1);
+  assert.ok(validateWorld(w).ok);
+  const roche = rocheLimitAU(w.planet.radius_km, w.planet.mass_mearth);
+  const m = w.moons[0]!;
+  m.orbit.a_au = roche * 1.15; // semi-major axis clears Roche...
+  m.orbit.e = 0.3;             // ...but periapsis a(1-e) = 0.805*Roche does not
+  const v = validateWorld(w);
+  assert.equal(v.ok, false);
+  assert.ok(v.checks.some((c) => c.name.includes("Roche") && !c.ok), "periapsis-Roche violation not caught");
 });
 
 test("tidal-locking timescale: Earth/Sun never locks, a close-in M-dwarf planet does", () => {

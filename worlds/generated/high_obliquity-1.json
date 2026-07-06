@@ -40,7 +40,36 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1475.082570873201,
+      "albedo": 0.16420041307341307,
+      "orbit": {
+        "a_au": 0.00036857468836894397,
+        "e": 0.042906234995462,
+        "i_deg": 27.840341430157423,
+        "Omega_deg": 154.33420093730092,
+        "omega_deg": 284.7890948317945,
+        "M0_deg": 70.79666789621115,
+        "epoch_jd": 2451545
+      }
+    },
+    {
+      "name": "moon b",
+      "radius_km": 1783.9293492026627,
+      "albedo": 0.15291447862517088,
+      "orbit": {
+        "a_au": 0.0007966690160291126,
+        "e": 0.14762522050878032,
+        "i_deg": 20.733299483545125,
+        "Omega_deg": 246.14598417654634,
+        "omega_deg": 290.13740921393037,
+        "M0_deg": 320.1874406822026,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +119,45 @@
     "planet.rotation_period_s": {
       "value": 96584,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 2,
+      "note": "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.042"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 0.887 AU > 0.0197 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00035 > Roche 0.00013; apo 0.00038 < 0.00397 AU"
+      },
+      {
+        "name": "moon moon b: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00068 > Roche 0.00013; apo 0.00091 < 0.00397 AU"
+      },
+      {
+        "name": "moons moon a/moon b mutually Hill-stable",
+        "ok": true,
+        "detail": "Delta=3.99 (>3.5)"
+      },
+      {
+        "name": "extreme obliquity (>45 deg)",
+        "ok": true,
+        "detail": "69.2 deg"
+      }
+    ]
   }
 }

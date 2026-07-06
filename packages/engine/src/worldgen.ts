@@ -192,11 +192,12 @@ function moonChecks(w: GeneratedWorld): Check[] {
   const roche = rocheLimitAU(w.planet.radius_km, w.planet.mass_mearth);
   const moons = [...w.moons].sort((a, b) => a.orbit.a_au - b.orbit.a_au);
   for (const m of moons) {
-    const a = m.orbit.a_au;
+    const a = m.orbit.a_au, e = m.orbit.e;
+    const peri = a * (1 - e), apo = a * (1 + e); // eccentric moon: check the extremes, not a
     checks.push({
-      name: `moon ${m.name}: Roche < a < 0.4 R_Hill`,
-      ok: a > roche && a < 0.4 * rHill,
-      detail: `${roche.toFixed(5)} < ${a.toFixed(5)} < ${(0.4 * rHill).toFixed(5)} AU`,
+      name: `moon ${m.name}: Roche < periapsis, apoapsis < 0.4 R_Hill`,
+      ok: peri > roche && apo < 0.4 * rHill,
+      detail: `peri ${peri.toFixed(5)} > Roche ${roche.toFixed(5)}; apo ${apo.toFixed(5)} < ${(0.4 * rHill).toFixed(5)} AU`,
     });
   }
   // mutual Hill stability between adjacent moons (separation > 3.5 mutual Hill radii)
@@ -212,6 +213,8 @@ function moonChecks(w: GeneratedWorld): Check[] {
 
 export function validateWorld(w: GeneratedWorld): Validation {
   const checks = [...commonChecks(w)];
+  // Any world may now carry moons (not just multi_moon): validate them wherever they appear.
+  if (w.moons.length > 0) checks.push(...moonChecks(w));
   const hz = habitableZoneAU(w.host_star.luminosity_lsun);
   const tau = tidalLockTimescaleYears(semi(w), w.host_star.mass_msun, w.planet.radius_km, w.planet.mass_mearth);
   const ageYr = w.age_gyr * 1e9;
@@ -245,7 +248,7 @@ export function validateWorld(w: GeneratedWorld): Validation {
       );
       break;
     case "multi_moon":
-      checks.push({ name: ">= 2 moons", ok: w.moons.length >= 2, detail: `${w.moons.length} moons` }, ...moonChecks(w));
+      checks.push({ name: ">= 2 moons", ok: w.moons.length >= 2, detail: `${w.moons.length} moons` });
       break;
     case "eccentric":
       checks.push(
@@ -258,17 +261,70 @@ export function validateWorld(w: GeneratedWorld): Validation {
 
 // --- per-type samplers ---
 const J2000_JD = 2451545.0;
-const baseOrbit = (a_au: number, e: number, r: () => number): KeplerElements => ({
-  a_au, e, i_deg: uniform(r, 0, 5), Omega_deg: uniform(r, 0, 360),
-  omega_deg: uniform(r, 0, 360), M0_deg: uniform(r, 0, 360), epoch_jd: J2000_JD,
+const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
+
+/** A moon orbit with real inclination + random node/argument/phase (the engine already
+ *  propagates all of these). Inclination is relative to the ecliptic -- the planet orbit sits
+ *  in the ICRS x-y plane (i=0) -- so an inclined moon aligns with the host star only near its
+ *  nodes, which is what makes eclipses cluster into seasons. */
+const moonOrbit = (a: number, e: number, iDeg: number, r: () => number): KeplerElements => ({
+  a_au: a, e, i_deg: iDeg, Omega_deg: uniform(r, 0, 360), omega_deg: uniform(r, 0, 360), M0_deg: uniform(r, 0, 360), epoch_jd: J2000_JD,
 });
 
-const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
+interface MoonPlan { max: number; incMaxDeg: number; eMax: number; resonant?: boolean }
+
+/**
+ * Sample a moon system around a planet, VALID BY CONSTRUCTION (periapsis clears Roche,
+ * apoapsis stays inside 0.4 R_Hill, adjacent moons stay mutually Hill-stable > 3.7). Moons
+ * carry inclination (eclipse seasons) and, for resonant systems, a near-2:1 period chain
+ * (Laplace-type -> recurring alignments). Returns [] when there is simply no room (a very
+ * close-in planet with a tiny Hill sphere) -- moons are common but never forced.
+ */
+function sampleMoons(r: () => number, host: RealHost, a_planet: number, planetMassEarth: number, planetRadiusKm: number, plan: MoonPlan): World["moons"] {
+  const rHill = hillRadiusAU(a_planet, planetMassEarth, host.mass_msun);
+  const roche = rocheLimitAU(planetRadiusKm, planetMassEarth);
+  const aMax = 0.34 * rHill, aMin = roche * 1.5;
+  if (plan.max <= 0 || aMin >= aMax) return [];
+  const name = (i: number) => `moon ${String.fromCharCode(97 + i)}`;
+  const mk = (a: number, i: number): World["moons"][number] => {
+    const eCap = Math.max(0, Math.min(plan.eMax, 0.9 * (aMax / a - 1), 0.9 * (1 - roche / a)));
+    const e = eCap > 0.01 ? uniform(r, 0, eCap) : 0;
+    const inc = uniform(r, Math.min(2, plan.incMaxDeg), plan.incMaxDeg);
+    const radius_km = plan.resonant ? uniform(r, 500, 1300) : uniform(r, 700, 1900);
+    return { name: name(i), radius_km, albedo: uniform(r, 0.06, 0.32), orbit: moonOrbit(a, e, inc, r) };
+  };
+  const mutualOK = (m1: World["moons"][number], m2: World["moons"][number]) => {
+    const mu = (moonMassEarth(m1.radius_km) + moonMassEarth(m2.radius_km)) * MEARTH;
+    const Rh = Math.cbrt(mu / (3 * planetMassEarth * MEARTH)) * ((m1.orbit.a_au + m2.orbit.a_au) / 2);
+    return (m2.orbit.a_au - m1.orbit.a_au) / Rh > 3.7;
+  };
+  const moons: World["moons"] = [];
+  if (plan.resonant && plan.max >= 2) {
+    const RATIO = Math.cbrt(4); // a2/a1 for a 2:1 period ratio (P ∝ a^1.5)
+    let a = uniform(r, aMin, Math.min(aMin * 1.5, aMax / RATIO));
+    moons.push(mk(a, 0));
+    for (let i = 1; i < plan.max; i++) {
+      const m = mk(a * RATIO, i);
+      if (m.orbit.a_au * (1 + m.orbit.e) >= aMax || !mutualOK(moons[moons.length - 1]!, m)) break;
+      moons.push(m); a *= RATIO;
+    }
+  } else {
+    const count = 1 + Math.floor(r() * plan.max);
+    let a = uniform(r, aMin, Math.min(aMin * 2.2, aMax * 0.6));
+    for (let i = 0; i < count && a < aMax; i++) {
+      const m = mk(a, i);
+      if (m.orbit.a_au * (1 + m.orbit.e) >= aMax || (moons.length && !mutualOK(moons[moons.length - 1]!, m))) break;
+      moons.push(m);
+      a *= uniform(r, 2.1, 2.9);
+    }
+  }
+  return moons;
+}
 
 function buildWorld(type: WorldType, host: RealHost, age_gyr: number, seed: number, opts: {
   a_au: number; e: number; tilt_deg: number; rotation_period_s: number;
   planet_radius_km?: number; planet_mass_mearth?: number; moons?: World["moons"];
-  name: string; aNote: string; rotNote?: string;
+  name: string; aNote: string; rotNote?: string; moonNote?: string;
 }): GeneratedWorld {
   const provenance: Record<string, ParamProvenance> = {
     host: { value: host.catalog_id, real: true, note: `real catalog star ${host.catalog_id}: observed galactic position & space velocity; luminosity from its absolute magnitude (M=${host.abs_mag.toFixed(2)}, BP-RP ${host.bp_rp.toFixed(2)})` },
@@ -282,7 +338,7 @@ function buildWorld(type: WorldType, host: RealHost, age_gyr: number, seed: numb
     "planet.axial_tilt_deg": { value: round4(opts.tilt_deg), note: type === "high_obliquity" ? "sampled > 45 deg (extreme obliquity)" : "sampled" },
     "planet.rotation_period_s": { value: Math.round(opts.rotation_period_s), note: opts.rotNote ?? "sampled" },
   };
-  if (opts.moons?.length) provenance["moons"] = { value: opts.moons.length, note: "each moon Roche < a < 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)" };
+  if (opts.moons?.length) provenance["moons"] = { value: opts.moons.length, note: opts.moonNote ?? "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)" };
 
   return {
     schema_version: "0.1",
@@ -316,12 +372,15 @@ function samplePlanetSystem(type: WorldType, r: () => number, host: RealHost, id
   const hz = habitableZoneAU(host.luminosity_lsun);
   const age = uniform(r, 1, 9);
   switch (type) {
-    case "habitable":
+    case "habitable": {
+      const a = uniform(r, hz.inner, hz.outer);
       return buildWorld(type, host, age, seed, {
-        a_au: uniform(r, hz.inner, hz.outer), e: uniform(r, 0, 0.05),
+        a_au: a, e: uniform(r, 0, 0.05),
         tilt_deg: uniform(r, 0, 35), rotation_period_s: uniform(r, 16, 40) * HOUR_S, name,
+        moons: sampleMoons(r, host, a, 1, 6371, { max: 2, incMaxDeg: 15, eMax: 0.1 }),
         aNote: `sampled in the host's habitable zone [${hz.inner.toFixed(3)}, ${hz.outer.toFixed(3)}] AU`,
       });
+    }
     case "tidally_locked": {
       // Locking radius for THIS host: tau_lock ~ C a^6, C = tau_lock(1 AU); a_lock where tau = age.
       const C = tidalLockTimescaleYears(1, host.mass_msun, 6371, 1);
@@ -331,45 +390,53 @@ function samplePlanetSystem(type: WorldType, r: () => number, host: RealHost, id
       const Porb_s = orbitalPeriodYears(a, host.mass_msun) * YEAR_S;
       return buildWorld(type, host, age, seed, {
         a_au: a, e: uniform(r, 0, 0.03), tilt_deg: uniform(r, 0, 8), rotation_period_s: Porb_s, name,
+        // with the host star fixed in the sky, a moon is the only moving body -- the most evocative case
+        moons: sampleMoons(r, host, a, 1, 6371, { max: 1, incMaxDeg: 22, eMax: 0.15 }),
+        moonNote: "a single moon is often the only moving body under a fixed sun; inclined orbit -> eclipse seasons; periapsis clears Roche",
         aNote: `sampled inside the tidal-locking radius a_lock=${aLock.toFixed(3)} AU (Gladman 1996: tau_lock < system age)`,
         rotNote: "= orbital period: spin-orbit synchronous (Kepler from a and host mass)",
       });
     }
-    case "cold_distant":
+    case "cold_distant": {
+      const a = logUniform(r, Math.max(5, Math.sqrt(host.luminosity_lsun / 0.28)), 60);
       return buildWorld(type, host, age, seed, {
-        a_au: logUniform(r, Math.max(5, Math.sqrt(host.luminosity_lsun / 0.28)), 60), e: uniform(r, 0, 0.2),
+        a_au: a, e: uniform(r, 0, 0.2),
         tilt_deg: uniform(r, 0, 30), rotation_period_s: uniform(r, 10, 30) * HOUR_S, name,
+        moons: sampleMoons(r, host, a, 1, 6371, { max: 2, incMaxDeg: 20, eMax: 0.15 }),
         aNote: "sampled far beyond the outer HZ, where the host's flux < 0.3 S_earth (a small, dim sun)",
       });
-    case "high_obliquity":
+    }
+    case "high_obliquity": {
+      const a = uniform(r, hz.inner, hz.outer * 1.5);
       return buildWorld(type, host, age, seed, {
-        a_au: uniform(r, hz.inner, hz.outer * 1.5), e: uniform(r, 0, 0.1),
+        a_au: a, e: uniform(r, 0, 0.1),
         tilt_deg: uniform(r, 50, 110), rotation_period_s: uniform(r, 12, 30) * HOUR_S, name,
+        moons: sampleMoons(r, host, a, 1, 6371, { max: 2, incMaxDeg: 30, eMax: 0.15 }),
         aNote: "sampled near the host's habitable zone",
       });
+    }
     case "multi_moon": {
-      const pr = uniform(r, 5000, 9000), pm = uniform(r, 0.8, 3.0);
+      const pr = uniform(r, 5000, 9000), pm = uniform(r, 1.5, 4);
       const a_planet = uniform(r, hz.inner, hz.outer * 1.4);
-      const rHill = hillRadiusAU(a_planet, pm, host.mass_msun);
-      const roche = rocheLimitAU(pr, pm);
-      const n = 2 + Math.floor(r() * 3);
-      const moons: World["moons"] = [];
-      let a = roche * uniform(r, 1.5, 2.2);
-      for (let i = 0; i < n && a < 0.38 * rHill; i++) {
-        moons.push({ name: `moon ${String.fromCharCode(97 + i)}`, radius_km: uniform(r, 800, 2000), albedo: uniform(r, 0.06, 0.3), orbit: baseOrbit(a, uniform(r, 0, 0.03), r) });
-        a *= uniform(r, 1.9, 2.6);
-      }
+      const moons = sampleMoons(r, host, a_planet, pm, pr, { max: 2 + Math.floor(r() * 3), incMaxDeg: 18, eMax: 0.08, resonant: true });
       return buildWorld(type, host, age, seed, {
         a_au: a_planet, e: uniform(r, 0, 0.05), tilt_deg: uniform(r, 0, 30), rotation_period_s: uniform(r, 14, 28) * HOUR_S,
-        planet_radius_km: pr, planet_mass_mearth: pm, moons, name, aNote: "sampled near the host's habitable zone",
+        planet_radius_km: pr, planet_mass_mearth: pm, moons, name,
+        moonNote: "near-2:1 resonant chain (Laplace-type: recurring multi-moon alignments); inclined orbits -> eclipse seasons; adjacent moons mutually Hill-stable",
+        aNote: "sampled near the host's habitable zone",
       });
     }
-    case "eccentric":
+    case "eccentric": {
+      const a = uniform(r, hz.inner, hz.outer * 1.6);
       return buildWorld(type, host, age, seed, {
-        a_au: uniform(r, hz.inner, hz.outer * 1.6), e: uniform(r, 0.35, 0.7),
+        a_au: a, e: uniform(r, 0.35, 0.7),
         tilt_deg: uniform(r, 0, 35), rotation_period_s: uniform(r, 12, 30) * HOUR_S, name,
+        // a moderately eccentric moon: apparent size (and a "supermoon") cycles over its orbit
+        moons: sampleMoons(r, host, a, 1, 6371, { max: 1, incMaxDeg: 18, eMax: 0.3 }),
+        moonNote: "eccentric moon: apparent size cycles over the orbit; periapsis clears Roche (checked at a(1-e))",
         aNote: "semi-major axis near the host's HZ; the apparent sun then pulses in size over the year",
       });
+    }
   }
 }
 

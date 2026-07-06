@@ -40,7 +40,22 @@
       "epoch_jd": 2451545
     }
   },
-  "moons": [],
+  "moons": [
+    {
+      "name": "moon a",
+      "radius_km": 1487.037757318467,
+      "albedo": 0.15930541452020408,
+      "orbit": {
+        "a_au": 0.00037497392712545585,
+        "e": 0.036333481594920156,
+        "i_deg": 15.85898793162778,
+        "Omega_deg": 72.88138266652822,
+        "omega_deg": 15.333979725837708,
+        "M0_deg": 231.1521574202925,
+        "epoch_jd": 2451545
+      }
+    }
+  ],
   "observer": {
     "lat_deg": 0,
     "lon_deg": 0,
@@ -90,6 +105,45 @@
     "planet.rotation_period_s": {
       "value": 42330,
       "note": "sampled"
+    },
+    "moons": {
+      "value": 1,
+      "note": "inclined moon orbits (eclipse seasons); periapsis clears Roche, apoapsis within 0.4 R_Hill; adjacent moons mutually Hill-stable (Delta > 3.5)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.017"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 24.919 AU > 0.0339 AU"
+      },
+      {
+        "name": "moon moon a: Roche < periapsis, apoapsis < 0.4 R_Hill",
+        "ok": true,
+        "detail": "peri 0.00036 > Roche 0.00013; apo 0.00039 < 0.08666 AU"
+      },
+      {
+        "name": "beyond the outer HZ (cold)",
+        "ok": true,
+        "detail": "a=25.36 > HZ_outer 3.14 AU"
+      },
+      {
+        "name": "dim sun (flux < 0.3 S_earth)",
+        "ok": true,
+        "detail": "S=8.14e-3 S_earth"
+      },
+      {
+        "name": "not ejected (a < 200 AU, bound)",
+        "ok": true,
+        "detail": "a=25.4 AU"
+      }
+    ]
   }
 }

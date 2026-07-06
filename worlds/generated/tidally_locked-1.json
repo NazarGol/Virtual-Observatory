@@ -91,5 +91,30 @@
       "value": 399127,
       "note": "= orbital period: spin-orbit synchronous (Kepler from a and host mass)"
     }
+  },
+  "validation": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "bound",
+        "ok": true,
+        "detail": "e=0.005"
+      },
+      {
+        "name": "not grazing star",
+        "ok": true,
+        "detail": "periastron 0.048 AU > 0.0180 AU"
+      },
+      {
+        "name": "locking is expected (tau < age)",
+        "ok": true,
+        "detail": "tau_lock 4.24e-6 Gyr < age 4.748594226315618 Gyr"
+      },
+      {
+        "name": "spin synchronized (Prot = Porb)",
+        "ok": true,
+        "detail": "Prot=4.62 d, Porb=4.62 d"
+      }
+    ]
   }
 }
