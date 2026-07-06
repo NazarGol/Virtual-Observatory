@@ -14,6 +14,8 @@ export interface StarPoint {
   dist?: number;
   /** proper-motion rate at this vantage, mas/yr (Proper-motion sensor). */
   pm?: number;
+  /** 1 if this star is in a highlighted co-moving group (Proper-motion sensor ↔ analysis). */
+  hl?: number;
 }
 
 /** Instrument sensors. Each is a transform from the SAME real catalog fields
@@ -48,17 +50,11 @@ function teffFromBpRp(bp: number): number {
   const T = 4600 * (1 / (0.92 * c + 1.7) + 1 / (0.92 * c + 0.62));
   return Math.max(2500, Math.min(30000, T));
 }
-// Planck spectral-radiance ratio K-band(2.2µm) / V-band(0.55µm), normalised to the Sun.
-// This is the physical "how much brighter in the IR than in V" factor: cool stars >> 1,
-// hot stars << 1. Used as the Thermal/IR sensor's brightness weight.
-const HC_K = 1.43877688e-2;                         // hc/k, metre·kelvin
-const planckV = (T: number) => Math.exp(HC_K / (0.55e-6 * T)) - 1;
-const planckK = (T: number) => Math.exp(HC_K / (2.2e-6 * T)) - 1;
-const LAMBDA5 = (0.55 / 2.2) ** 5;                  // (λV/λK)^5
-const irRatio = (T: number) => (LAMBDA5 * planckV(T)) / planckK(T);
-const IR_SUN = irRatio(5772);
-function irWeight(bp: number): number {
-  return Math.max(0.1, Math.min(20, irRatio(teffFromBpRp(bp)) / IR_SUN));
+// Temperature emphasis (Sun-normalised, ~(T/Tsun)^2): the Thermal sensor answers "which
+// stars are actually HOT?" -- hot O/B stars blaze, cool stars recede, so what dominates the
+// frame flips versus the eye. Derived from the real colour->Teff estimate.
+function tempWeight(bp: number): number {
+  return Math.max(0.05, Math.min(15, (teffFromBpRp(bp) / 5772) ** 2));
 }
 // Brightness (Phase 5): the shader maps magnitude -> flux -> tone-mapped luminance so the
 // ~100x naked-eye range isn't linear-crushed; a size floor keeps faint stars from vanishing
@@ -311,13 +307,13 @@ export class StarField {
     this.rawStars = stars;
     const N = stars.length;
     const tnt = new Float32Array(N * 3), mag = new Float32Array(N), dir = new Float32Array(N * 3);
-    const bprp = new Float32Array(N), dst = new Float32Array(N), pm = new Float32Array(N), irw = new Float32Array(N);
+    const bprp = new Float32Array(N), dst = new Float32Array(N), pm = new Float32Array(N), tw = new Float32Array(N), grp = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const s = stars[i];
       const c = tint(s.bp_rp);
       tnt[i * 3] = c[0]; tnt[i * 3 + 1] = c[1]; tnt[i * 3 + 2] = c[2];
       mag[i] = s.mag;
-      bprp[i] = s.bp_rp ?? 0.6; dst[i] = s.dist ?? 10; pm[i] = s.pm ?? 0; irw[i] = irWeight(s.bp_rp);
+      bprp[i] = s.bp_rp ?? 0.6; dst[i] = s.dist ?? 10; pm[i] = s.pm ?? 0; tw[i] = tempWeight(s.bp_rp); grp[i] = s.hl ?? 0;
       dir[i * 3] = s.dir[0]; dir[i * 3 + 1] = s.dir[1]; dir[i * 3 + 2] = s.dir[2];
     }
     if (!this.geom) {
@@ -333,7 +329,7 @@ export class StarField {
         },
         vertexShader: `
           attribute vec3 tint; attribute float mag; attribute float vis; attribute vec3 dir;
-          attribute float bprp; attribute float dist; attribute float pmr; attribute float irw;
+          attribute float bprp; attribute float dist; attribute float pmr; attribute float tw; attribute float grp;
           uniform float uDpr, uExposure, uZero;
           uniform vec3 uSunDir; uniform float uSunCos, uSunOn;
           uniform int uSensor; uniform float uPmRef, uDistNear, uDistFar;
@@ -349,21 +345,24 @@ export class StarField {
             float reinh = flux / (flux + 1.0);                     // Reinhard tone-map -> [0,1)
             float wash = uSunOn * smoothstep(uSunCos - 0.06, uSunCos + 0.02, dot(dir, uSunDir));
             float lum; vec3 col; float sizeBoost = 1.0;
-            if (uSensor == 1) {                 // THERMAL / IR: physical K/V blackbody flux
-              float f = flux * irw;             // irw = Planck K/V ratio (Sun-normalised), CPU-side
-              lum = (f / (f + 1.0)) * (1.0 - 0.55 * wash);
-              col = thermalPalette(bprp) * clamp(lum * 1.2, 0.05, 1.0);
-            } else if (uSensor == 2) {          // PROPER MOTION: colour+size by drift rate
-              lum = reinh * (1.0 - 0.5 * wash);
+            if (uSensor == 1) {                 // TEMPERATURE: hot stars blaze, cool recede
+              float f = flux * tw;              // tw ~ (Teff/Tsun)^2 (CPU-side, from real colour)
+              lum = (f / (f + 1.0)) * (1.0 - 0.5 * wash);
+              col = thermalPalette(bprp) * clamp(lum * 1.25, 0.05, 1.0);
+            } else if (uSensor == 2) {          // PROPER MOTION: movers blaze; co-movers highlighted
               float pf = pow(clamp(pmr / uPmRef, 0.0, 1.0), 0.5);
-              col = mix(vec3(0.15, 0.19, 0.29), vec3(1.0, 0.42, 0.92), pf) * clamp(0.28 + lum, 0.12, 1.0);
-              sizeBoost = 1.0 + 2.4 * pf;
-            } else if (uSensor == 3) {          // DISTANCE: near warm, far cool
-              lum = reinh * (1.0 - 0.5 * wash);
+              lum = reinh * (0.08 + 0.92 * pf) * (1.0 - 0.4 * wash); // slow stars nearly vanish
+              col = mix(vec3(0.13, 0.16, 0.25), vec3(1.0, 0.42, 0.92), pf);
+              if (grp > 0.5) { col = vec3(0.40, 1.0, 0.72); lum = max(lum, 0.7); } // analysis co-moving group
+              col *= clamp(0.30 + lum, 0.12, 1.0);
+              sizeBoost = 1.0 + 2.6 * pf + (grp > 0.5 ? 1.8 : 0.0);
+            } else if (uSensor == 3) {          // DISTANCE: near big+warm, far small+cool
               float df = clamp((log2(dist + 1.0) - uDistNear) / (uDistFar - uDistNear), 0.0, 1.0);
-              col = mix(vec3(1.0, 0.55, 0.34), vec3(0.38, 0.60, 1.0), df) * clamp(0.30 + lum, 0.14, 1.0);
+              lum = reinh * (0.15 + 0.85 * (1.0 - df)) * (1.0 - 0.4 * wash);
+              col = mix(vec3(1.0, 0.5, 0.30), vec3(0.36, 0.60, 1.0), df) * clamp(0.30 + lum, 0.14, 1.0);
+              sizeBoost = 1.0 + 3.0 * (1.0 - df); // near stars dramatically larger
             } else if (uSensor == 4) {          // PHOTOMETRIC: linear detector, response ∝ flux
-              lum = clamp(flux, 0.0, 1.0) * (1.0 - 0.5 * wash);   // no perceptual compression
+              lum = clamp(flux * 1.4, 0.0, 1.0) * (1.0 - 0.5 * wash); // no perceptual compression
               col = vec3(0.72, 0.88, 0.82) * clamp(lum + 0.03, 0.03, 1.0);
             } else {                            // VISIBLE: perceptual, true colour (default)
               lum = reinh * (1.0 - 0.98 * wash);
@@ -394,7 +393,8 @@ export class StarField {
     this.geom.setAttribute("bprp", new THREE.BufferAttribute(bprp, 1));
     this.geom.setAttribute("dist", new THREE.BufferAttribute(dst, 1));
     this.geom.setAttribute("pmr", new THREE.BufferAttribute(pm, 1));
-    this.geom.setAttribute("irw", new THREE.BufferAttribute(irw, 1));
+    this.geom.setAttribute("tw", new THREE.BufferAttribute(tw, 1));
+    this.geom.setAttribute("grp", new THREE.BufferAttribute(grp, 1));
     this.layoutStars();
   }
 

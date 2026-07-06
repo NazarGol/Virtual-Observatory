@@ -84,15 +84,15 @@ const SENSOR_LABEL: Record<Sensor, string> = {
 const EPOCHS: { label: string; y: number }[] = [
   { label: "off", y: 0 }, { label: "10 kyr", y: 1e4 }, { label: "100 kyr", y: 1e5 }, { label: "1 Myr", y: 1e6 },
 ];
-const SENSOR_LEGEND: Record<Sensor, { cap: string; ramp?: string; ticks?: [string, string] }> = {
-  visible: { cap: "Perceptual channel — true star colour (Gaia BP−RP), Reinhard tone-mapped brightness." },
-  thermal: { cap: "Thermal / IR — brightness = blackbody K-band (2.2 µm) flux from each star's Teff; cool stars outshine hot ones. Colour by temperature.",
+const SENSOR_LEGEND: Record<Sensor, { q: string; cap: string; ramp?: string; ticks?: [string, string] }> = {
+  visible: { q: "What would the eye see?", cap: "Perceptual — true star colour (Gaia BP−RP), Reinhard tone-mapped brightness." },
+  thermal: { q: "Which stars are actually hot?", cap: "Hot O/B stars blaze; cool stars recede. Brightness weighted by Teff (from real colour); colour = temperature.",
     ramp: "linear-gradient(90deg,#bcd8ff,#fff1bd,#ff6a38)", ticks: ["hot", "cool"] },
-  proper_motion: { cap: "Proper motion — angular drift rate (mas/yr), which changes with the vantage; recomputed for this relocation.",
+  proper_motion: { q: "What's moving — and together?", cap: "Slow stars fade out, fast movers blaze (mas/yr, vantage-dependent). Co-moving groups from Analysis light up green.",
     ramp: "linear-gradient(90deg,#273149,#ff6bec)", ticks: ["slow", "fast"] },
-  distance: { cap: "Distance — observer-relative parallax distance after relocation (real Gaia distances).",
+  distance: { q: "How far is everything?", cap: "Near stars swell and warm; distant stars shrink and cool (real parallax, observer-relative).",
     ramp: "linear-gradient(90deg,#ff8c57,#6199ff)", ticks: ["near", "far"] },
-  photometric: { cap: "Photometric — linear detector: response ∝ true flux, no perceptual compression. Bright stars saturate, faint fall away (real dynamic range)." },
+  photometric: { q: "The true brightness ratios?", cap: "Linear detector — response ∝ flux. A few stars blaze, most vanish: the real dynamic range, uncompressed." },
 };
 
 function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
@@ -154,6 +154,7 @@ export function App() {
   const [epochDelta, setEpochDelta] = useState(0);        // B5 comparator span (0 = off)
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candScanned, setCandScanned] = useState(false);
+  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set()); // co-moving members -> Motion sensor
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [draft, setDraft] = useState<string[]>([]);
@@ -331,8 +332,8 @@ export function App() {
     return m;
   }, [sky, sessionInfo]);
   const starPoints: StarPoint[] = useMemo(
-    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp, dist: s.distance_pc, pm: pmById.get(s.id) ?? 0 })),
-    [inertial, pmById]);
+    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp, dist: s.distance_pc, pm: pmById.get(s.id) ?? 0, hl: highlightIds.has(s.id) ? 1 : 0 })),
+    [inertial, pmById, highlightIds]);
 
   // Epoch comparator (B5): ghost tracks from each fast mover's current position to where it
   // drifts over the chosen span. Capped to the fastest movers so it stays legible + cheap.
@@ -350,21 +351,25 @@ export function App() {
   }, [epochDelta, sky, sessionInfo, inertial, inertialEpoch, pmById]);
 
   // B3: propose candidate regularities from what is currently in view. Human triggers it.
+  // co-moving group members feed the Motion sensor highlight (sensor ↔ analysis)
+  const applyCandidates = (cs: Candidate[]) => {
+    setCandidates(cs);
+    setHighlightIds(new Set(cs.filter((c) => c.kind === "co-moving").flatMap((c) => c.objectIds)));
+    setCandScanned(true);
+  };
   const findCandidates = () => {
     if (!sky) return;
     const vis = new Set(inertial.map((s) => s.id));
-    setCandidates([
+    applyCandidates([
       ...comovingCandidates(sky.catalog.stars, vis),
       ...alignmentCandidates(inertial),
       ...anomalyCandidates(inertial, pmById),
     ]);
-    setCandScanned(true);
   };
   // Star-centric proposal (user request): candidates that involve the selected star.
   const findFromStar = (id: string) => {
     if (!sky) return;
-    setCandidates(candidatesFromStar(sky.catalog.stars, inertial, pmById, id));
-    setCandScanned(true);
+    applyCandidates(candidatesFromStar(sky.catalog.stars, inertial, pmById, id));
   };
 
   const resolver: ObjectResolver = useCallback(
@@ -639,6 +644,7 @@ function Toolbar(props: {
         ))}
       </div>
       <div className="legend">
+        <div className="cap" style={{ color: "var(--ink-dim)", fontWeight: 600 }}>▸ {SENSOR_LEGEND[props.sensor].q}</div>
         <div className="cap">{SENSOR_LEGEND[props.sensor].cap}</div>
         {SENSOR_LEGEND[props.sensor].ramp && (
           <>
