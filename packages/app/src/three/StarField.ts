@@ -95,6 +95,10 @@ export class StarField {
   private crawls: { proj: ([number, number, number] | null)[]; period: number; points: THREE.Points; buf: Float32Array }[] = [];
   private plotTimeYears = 0;
   private groundGroup = new THREE.Group(); // dome ground (B8; twilight glow removed in 6R)
+  private linkGroup = new THREE.Group();   // dotted link-lines between event bodies (6R)
+  private rawLinks: Vec3[][] = [];
+  private pulseGroup = new THREE.Group();  // one-shot event pulses (6R)
+  private arrivalStart = performance.now(); // the chart plots itself on open/arrival
   private hostTex = hostGlyphTexture();
   private sibTex = siblingGlyphTexture();
   private phaseTexCache = new Map<number, THREE.Texture>();
@@ -143,7 +147,7 @@ export class StarField {
     this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
     this.orthoCam.position.set(0, 0, 1);
     this.orthoCam.lookAt(0, 0, 0);
-    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup, this.pathGroup, this.groundGroup);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup, this.pathGroup, this.groundGroup, this.linkGroup, this.pulseGroup);
 
     // faint dotted celestial-equator ring for orientation (gnomonic only) — chart ink
     const eq = new THREE.BufferGeometry().setFromPoints(
@@ -219,6 +223,7 @@ export class StarField {
     this.layoutBodies();
     this.layoutPaths();
     this.layoutGround();
+    this.layoutLinks();
   }
 
   setProjection(mode: "gnomonic" | "fisheye" | "dome"): void {
@@ -292,10 +297,10 @@ export class StarField {
       // that counter-rotate very slowly (the reference's ringed nodes).
       this.starMat = new THREE.ShaderMaterial({
         transparent: true, depthWrite: false, blending: THREE.NormalBlending,
-        uniforms: { uDpr: { value: this.dpr }, uTime: { value: 0 } },
+        uniforms: { uDpr: { value: this.dpr }, uTime: { value: 0 }, uArrival: { value: 10 } },
         vertexShader: `
           attribute float vis; attribute float cls; attribute float rank; attribute float seed;
-          uniform float uDpr;
+          uniform float uDpr, uArrival;
           varying float vCls; varying float vRank; varying float vSeed;
           void main(){
             vCls = cls; vRank = rank; vSeed = seed;
@@ -305,6 +310,12 @@ export class StarField {
               cls > 2.5 ? 5.4 :
               cls > 1.5 ? 3.8 :
               cls > 0.5 ? 2.6 : 1.7;
+            // ARRIVAL SELF-PLOT: the chart draws itself, brightest classes first, with a
+            // small per-star jitter so each class stipples in rather than popping at once.
+            float delay =
+              (rank > 0.5 ? 0.08 : cls > 3.5 ? 0.25 : cls > 2.5 ? 0.45 : cls > 1.5 ? 0.65 : cls > 0.5 ? 0.85 : 1.05)
+              + fract(abs(seed) * 13.7) * 0.3;
+            if (uArrival < delay) ps = 0.0;
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             gl_PointSize = ps * uDpr * vis;  // vis=0 hides off-view points
           }`,
@@ -538,11 +549,58 @@ export class StarField {
   /** The sim time that drives the crawl phase (the body's true angular rate). */
   setPlotTime(tYears: number): void { this.plotTimeYears = tYears; }
 
+  /** Replay the arrival self-plot: stars populate by brightness class, orbits trace in. */
+  beginArrival(): void { this.arrivalStart = performance.now(); }
+
+  /** Dotted signal-plate link-lines between the bodies of an imminent event (EVENTS mode). */
+  setLinkLines(arcs: Vec3[][]): void {
+    this.rawLinks = arcs;
+    this.layoutLinks();
+  }
+
+  private layoutLinks(): void {
+    this.linkGroup.clear();
+    for (const arc of this.rawLinks) {
+      const pts = this.projArc(arc);
+      if (!pts) continue;
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineDashedMaterial({ color: INK_HEX.signal, transparent: true, opacity: 0.55, dashSize: 0.5, gapSize: 1.1 }));
+      line.computeLineDistances();
+      this.linkGroup.add(line);
+    }
+  }
+
+  /** One-shot event pulse: an expanding, fading dotted ring at each direction (the moment
+   *  an eclipse/conjunction registers). Self-removing. */
+  pulseAt(dirs: Vec3[]): void {
+    for (const d of dirs) {
+      const p = this.projectScene(d);
+      if (!p) continue;
+      const NPTS = 24, arr = new Float32Array(NPTS * 3);
+      for (let k = 0; k < NPTS; k++) {
+        const a = (k / NPTS) * Math.PI * 2;
+        arr[k * 3] = Math.cos(a) * 3; arr[k * 3 + 1] = Math.sin(a) * 3; arr[k * 3 + 2] = 0;
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+      const mat = new THREE.PointsMaterial({ color: INK_HEX.signal, size: 2.4 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.9, depthWrite: false });
+      const pts = new THREE.Points(geom, mat);
+      pts.position.set(p[0], p[1], p[2]);
+      pts.userData.birth = performance.now();
+      pts.frustumCulled = false;
+      this.pulseGroup.add(pts);
+    }
+  }
+
   private marchCrawls(): void {
     const M = 48;
+    // orbits TRACE IN after the stars during the arrival self-plot
+    const arrival = Math.min(1, Math.max(0, ((performance.now() - this.arrivalStart) / 1000 - 0.9) / 0.6));
     for (const c of this.crawls) {
       const N = c.proj.length - 1;
       if (N < 1) continue;
+      (c.points.geometry as THREE.BufferGeometry).setDrawRange(0, Math.floor(M * arrival));
       const frac = ((this.plotTimeYears / c.period) % 1 + 1) % 1;
       const pos = c.buf;
       for (let k = 0; k < M; k++) {
@@ -692,7 +750,10 @@ export class StarField {
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
     const cam = this.activeCam();
-    if (this.starMat) this.starMat.uniforms.uTime!.value = performance.now() / 1000; // ring rotation
+    if (this.starMat) {
+      this.starMat.uniforms.uTime!.value = performance.now() / 1000;                       // ring rotation
+      this.starMat.uniforms.uArrival!.value = (performance.now() - this.arrivalStart) / 1000; // self-plot
+    }
     if (this.points) {
       this.ray.params.Points!.threshold = this.mode === "gnomonic"
         ? (this.fov / 60) * 1.4
@@ -715,15 +776,28 @@ export class StarField {
           Math.atan2(dx * up.x + dy * up.y + dz * up.z, dx * right.x + dy * right.y + dz * right.z);
       }
     }
-    // selection rings: self-draw dot-by-dot, then breathe at low amplitude
+    // selection rings: self-draw dot-by-dot, breathe at low amplitude, rotate in DETENTS
+    // (physics glides, the machine ticks)
     if (this.selGroup.children.length) {
       const now = performance.now();
       const k = 1 + 0.08 * Math.sin(now * 0.004);
+      const detent = Math.floor(now / 700) * (Math.PI / 12); // 15° steps, one per 0.7s
       for (const c of this.selGroup.children) {
         const born = (c.userData.birth as number) ?? now;
         const reveal = Math.min(1, (now - born) / 450);
         ((c as THREE.Points).geometry as THREE.BufferGeometry).setDrawRange(0, Math.max(1, Math.floor(16 * reveal)));
         c.scale.setScalar(k);
+        c.rotation.z = detent;
+      }
+    }
+    // one-shot event pulses: expand + fade, then self-remove
+    if (this.pulseGroup.children.length) {
+      const now = performance.now();
+      for (const c of [...this.pulseGroup.children]) {
+        const age = (now - ((c.userData.birth as number) ?? now)) / 900;
+        if (age >= 1) { this.pulseGroup.remove(c); continue; }
+        c.scale.setScalar(1 + age * 3.2);
+        ((c as THREE.Points).material as THREE.PointsMaterial).opacity = 0.9 * (1 - age);
       }
     }
     // orbital tracks: marching dots at each body's true angular rate

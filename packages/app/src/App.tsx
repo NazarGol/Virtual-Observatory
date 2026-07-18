@@ -68,7 +68,7 @@ const LOCAL_RATES: { label: string; yps: number }[] = [
 ];
 
 type WorldClock = { orbitYears: number; rotDays: number; locked: boolean; type: string; name: string };
-type SkyEvent = { t: number; label: string; kind: "day" | "conj" | "eclipse" };
+type SkyEvent = { t: number; label: string; kind: "day" | "conj" | "eclipse"; names: string[]; recurYears?: number };
 type Scan = { from: number; span: number; events: SkyEvent[] };
 
 type Tool = "select" | "angular_distance" | "separation_position_angle" | "alignment" | "figure" | "label";
@@ -85,6 +85,19 @@ const EPOCHS: { label: string; y: number }[] = [
 
 function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
   try { const s = localStorage.getItem(key); return s ? parse(s) : fallback; } catch { return fallback; }
+}
+
+/** Machine tick (Phase 6R motion rule: physics glides, the MACHINE ticks): sample a live
+ *  value on a fixed cadence so chrome numerals update in discrete steps. */
+function useTicked<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  const latest = useRef(value);
+  latest.current = value;
+  useEffect(() => {
+    const id = window.setInterval(() => setV(latest.current), ms);
+    return () => window.clearInterval(id);
+  }, [ms]);
+  return v;
 }
 
 /** Collapsible rail section (minimal UI): a header line + body shown only when open.
@@ -127,7 +140,6 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
   const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World; type: string; worldName: string } | null>(null);
-  const [showArrival, setShowArrival] = useState(false);
   const [epochYears, setEpochYears] = useState(0);   // deep time (proper motion / precession)
   const [localYears, setLocalYears] = useState(0);   // world-native fast time (rotation, sun, moons)
   const tYears = epochYears + localYears;            // the single underlying coordinate
@@ -296,27 +308,79 @@ export function App() {
     const host = bodiesNow.find((b) => b.kind === "host_star");
     if (host) {
       const rst = riseSetOf(o, obs, host.direction_icrs as Vec3, from);
-      if (rst.circumpolar) events.push({ t: from, label: `${host.name} never sets — circumpolar`, kind: "day" });
-      else if (rst.neverRises) events.push({ t: from, label: `${host.name} never rises — permanent night`, kind: "day" });
+      if (rst.circumpolar) events.push({ t: from, label: `${host.name} never sets — circumpolar`, kind: "day", names: [host.name] });
+      else if (rst.neverRises) events.push({ t: from, label: `${host.name} never rises — permanent night`, kind: "day", names: [host.name] });
       else {
-        if (rst.riseYears != null) events.push({ t: rst.riseYears, label: `${host.name} rises — dawn`, kind: "day" });
-        if (rst.transitYears != null) events.push({ t: rst.transitYears, label: `${host.name} transits ${rst.transitAltitudeDeg.toFixed(0)}° — local noon`, kind: "day" });
-        if (rst.setYears != null) events.push({ t: rst.setYears, label: `${host.name} sets — dusk`, kind: "day" });
+        if (rst.riseYears != null) events.push({ t: rst.riseYears, label: `${host.name} rises — dawn`, kind: "day", names: [host.name] });
+        if (rst.transitYears != null) events.push({ t: rst.transitYears, label: `${host.name} transits ${rst.transitAltitudeDeg.toFixed(0)}° — local noon`, kind: "day", names: [host.name] });
+        if (rst.setYears != null) events.push({ t: rst.setYears, label: `${host.name} sets — dusk`, kind: "day", names: [host.name] });
       }
     }
+    // synodic recurrence of a pair: 1/|1/P1 - 1/P2| (the "great clock" a calendar culture reads)
+    const orbitYears = Math.sqrt(world.planet.orbit.a_au ** 3 / Math.max(world.host_star.mass_msun, 1e-6));
+    const Mp = Math.max(world.planet.mass_mearth * 3.003e-6, 1e-12);
+    const periodOf = (name: string): number => {
+      const m = world.moons.find((mo) => mo.name === name);
+      return m ? Math.sqrt(m.orbit.a_au ** 3 / Mp) : orbitYears;
+    };
     const names = bodiesNow.map((b) => b.name);
     const dirOf = (name: string) => (t: number) => { const b = at(t).find((x) => x.name === name); return b ? (b.direction_icrs as Vec3) : null; };
     const radAt = (name: string, t: number) => { const b = at(t).find((x) => x.name === name); return b ? b.angularDiameterDeg / 2 : 0; };
     for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
       const c = findMinSeparation(dirOf(names[i]!), dirOf(names[j]!), from, span);
       if (!c) continue;
+      const P1 = periodOf(names[i]!), P2 = periodOf(names[j]!);
+      const dn = Math.abs(1 / P1 - 1 / P2);
+      const recurYears = dn > 1e-9 ? 1 / dn : undefined;
+      const pair = [names[i]!, names[j]!];
       const rSum = radAt(names[i]!, c.timeYears) + radAt(names[j]!, c.timeYears);
-      if (c.separationDeg < rSum) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} — occultation / eclipse (${c.separationDeg.toFixed(3)}°)`, kind: "eclipse" });
-      else if (c.separationDeg < 3) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} conjunction — ${c.separationDeg.toFixed(2)}°`, kind: "conj" });
+      if (c.separationDeg < rSum) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} — occultation / eclipse (${c.separationDeg.toFixed(3)}°)`, kind: "eclipse", names: pair, recurYears });
+      else if (c.separationDeg < 3) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} conjunction — ${c.separationDeg.toFixed(2)}°`, kind: "conj", names: pair, recurYears });
     }
     events.sort((a, b) => a.t - b.t);
     return { from, span, events };
   }, [scanReq, worldVantage, apparatus]);
+
+  // Auto-arm the scanner on arrival (one local year) and re-arm when the window is exhausted,
+  // so OBSERVE's next-event countdown is always live without user action.
+  useEffect(() => {
+    if (!worldVantage || !worldClock) { setScanReq(null); return; }
+    setScanReq({ from: tYears, span: worldClock.orbitYears });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm once per world
+  }, [worldVantage, worldClock]);
+  useEffect(() => {
+    if (scan && scan.events.length > 0 && tYears > scan.from + scan.span) {
+      setScanReq({ from: tYears, span: scan.span });
+    }
+  }, [tYears, scan]);
+
+  // The event REGISTERS: when sim time crosses an event moment, pulse the involved bodies.
+  const pulseFnRef = useRef<(dirs: Vec3[]) => void>(() => {});
+  const beginArrivalRef = useRef<() => void>(() => {});
+  const prevTRef = useRef(tYears);
+  useEffect(() => {
+    const prev = prevTRef.current;
+    prevTRef.current = tYears;
+    if (!scan || tYears <= prev || tYears - prev > 0.5) return; // only while playing forward
+    const crossed = scan.events.filter((e) => e.t > prev && e.t <= tYears && e.kind !== "day");
+    if (!crossed.length) return;
+    const dirs: Vec3[] = [];
+    for (const e of crossed) for (const n of e.names) {
+      const b = allBodies.find((x) => x.name === n);
+      if (b) dirs.push(b.direction_icrs as Vec3);
+    }
+    if (dirs.length) { pulseFnRef.current(dirs); chime(); }
+  }, [tYears, scan, allBodies]);
+
+  // EVENTS mode: dotted signal link-line between the bodies of the next upcoming pair event.
+  const linkArcs = useMemo(() => {
+    if (mode !== "events" || !scan) return [] as Vec3[][];
+    const next = scan.events.find((e) => e.t > tYears && e.names.length === 2);
+    if (!next) return [] as Vec3[][];
+    const a = allBodies.find((b) => b.name === next.names[0]);
+    const b = allBodies.find((x) => x.name === next.names[1]);
+    return a && b ? [geodesicArc(a.direction_icrs as Vec3, b.direction_icrs as Vec3, 32)] : [];
+  }, [mode, scan, tYears, allBodies]);
 
   const dirById = useMemo(() => new Map(inertial.map((s) => [s.id, s.direction_icrs])), [inertial]);
   const metaById = useMemo(() => new Map(inertial.map((s) => [s.id, s])), [inertial]);
@@ -464,7 +528,9 @@ export function App() {
   if (view === "gallery") return <Gallery onBack={() => setView("instrument")}
     onObserve={(w) => {
       setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w), type: w.world_type, worldName: w.name });
-      setShowArrival(true); setView("instrument");
+      setMode("observe"); setView("instrument");
+      // arrival = the chart plots itself (SkyView remounts and re-registers first)
+      window.setTimeout(() => beginArrivalRef.current(), 0);
     }} />;
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
@@ -536,10 +602,6 @@ export function App() {
   return (
     <div className="app">
       <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ Worlds</button>
-      {showArrival && worldVantage && worldClock && (
-        <ArrivalCard clock={worldClock} hostLabel={worldVantage.label} distPc={Math.hypot(...worldVantage.pos)}
-          world={worldVantage.world} onClose={() => setShowArrival(false)} />
-      )}
       {showHelp && <KbHelp onClose={() => setShowHelp(false)} />}
       {speculative && (
         <div className="speculative">
@@ -552,6 +614,8 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)} onLook={setViewDir}
+        pulseRef={(fn) => (pulseFnRef.current = fn)} arrivalRef={(fn) => (beginArrivalRef.current = fn)}
+        links={linkArcs}
         milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]} plotTime={tYears}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
@@ -742,10 +806,12 @@ function CompassTape(props: { azDeg: number; altDeg: number }) {
     ticks.push(<span key={d} className={"tick" + (major ? " major" : "")} style={{ left: x }} />);
     if (major && CARD[norm]) ticks.push(<span key={`l${d}`} className="tlabel" style={{ left: x }}>{CARD[norm]}</span>);
   }
+  // the tape strip GLIDES (physics); the numeric readout TICKS (machine cadence)
+  const azTick = useTicked(az, 250), altTick = useTicked(props.altDeg, 250);
   return (
     <div className="tapewrap">
       <div className="tape">{ticks}<span className="centermark" /></div>
-      <div className="bearing">{az.toFixed(0).padStart(3, "0")}°<span className="sup">T</span> · {props.altDeg >= 0 ? "+" : ""}{props.altDeg.toFixed(0)}°<span className="sup">ALT</span></div>
+      <div className="bearing">{azTick.toFixed(0).padStart(3, "0")}°<span className="sup">T</span> · {altTick >= 0 ? "+" : ""}{altTick.toFixed(0)}°<span className="sup">ALT</span></div>
     </div>
   );
 }
@@ -764,15 +830,17 @@ function WorldHeader(props: { worldClock: WorldClock | null; hostLabel: string |
   );
 }
 
-/** Next-event countdown chip (OBSERVE furniture): the first scanned event still ahead. */
+/** Next-event countdown chip (OBSERVE furniture): the first scanned event still ahead.
+ *  The countdown ticks on a machine cadence. */
 function NextEventChip(props: { scan: Scan | null; t: number; observing: boolean }) {
+  const t = useTicked(props.t, 500);
   if (!props.observing || !props.scan) return null;
-  const next = props.scan.events.find((e) => e.t > props.t);
+  const next = props.scan.events.find((e) => e.t > t);
   if (!next) return null;
   return (
     <div className="nextevent">
       <div className="sup">Next event</div>
-      <div className="val">{next.label} · <b>T−{fmtT(next.t - props.t)}</b></div>
+      <div className="val">{next.label} · <b>T−{fmtT(next.t - t)}</b></div>
     </div>
   );
 }
@@ -995,29 +1063,6 @@ function KbHelp(props: { onClose: () => void }) {
   );
 }
 
-/** Arrival card (B7): the moment of relocating to a world — where you are, in its terms. */
-function ArrivalCard(props: { clock: WorldClock; hostLabel: string; distPc: number; world: World; onClose: () => void }) {
-  const w = props.world, wc = props.clock;
-  return (
-    <div className="arrival card" style={{ width: 344, padding: "12px 14px", background: "var(--panel)", boxShadow: "0 10px 34px rgba(0,0,0,.6)" }}>
-      <div className="chead" style={{ marginBottom: 8 }}>
-        <span style={{ letterSpacing: ".16em", textTransform: "uppercase", fontSize: 10, color: "var(--muted)" }}>◆ Arrival</span>
-        <button className="x" onClick={props.onClose}>×</button>
-      </div>
-      <div style={{ fontSize: 15, color: "var(--ink)" }}>{wc.name}</div>
-      <div className="muted" style={{ margin: "1px 0 9px" }}>{wc.type.replace(/_/g, " ")} · orbiting {props.hostLabel}</div>
-      <div className="row"><span className="k">distance from Sol</span><span className="v">{props.distPc.toFixed(2)} pc</span></div>
-      <div className="row"><span className="k">host star</span><span className="v">{w.host_star.mass_msun.toFixed(2)} M☉ · {Math.round(w.host_star.teff_k)} K</span></div>
-      <div className="row"><span className="k">local year</span><span className="v">{wc.orbitYears.toFixed(2)} yr</span></div>
-      <div className="row"><span className="k">local day</span><span className="v">{wc.locked ? "— tide-locked" : `${wc.rotDays.toFixed(2)} d`}</span></div>
-      <div className="row"><span className="k">moons</span><span className="v">{w.moons.length}</span></div>
-      <div className="muted" style={{ marginTop: 9, fontSize: 11, lineHeight: 1.45 }}>
-        The sky below is this world's — the real catalog, relocated to its host.{wc.locked ? " Its star never sets." : ""}
-      </div>
-    </div>
-  );
-}
-
 /** Analysis (B3 + B5): the epoch comparator (ghost drift over a span) and candidate
  *  regularities (co-moving groups, alignments, anomalies). Everything here is a proposal —
  *  the human selects, confirms, names, records. Compute never authors a finished pattern. */
@@ -1089,7 +1134,9 @@ function EventScanner(props: {
                   <button className="link" onClick={() => props.onJump(e.t)}>{e.label}</button>
                   <span className="faint" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>{KIND[e.kind]}</span>
                 </div>
-                <div className="ids">t+{fmtT(e.t - props.scan!.from)}</div>
+                <div className="ids">t+{fmtT(e.t - props.scan!.from)}{e.recurYears != null && props.worldClock
+                  ? ` · recurs ~${(e.recurYears * 365.25 / props.worldClock.rotDays).toFixed(1)} local-d`
+                  : e.recurYears != null ? ` · recurs ~${fmtT(e.recurYears)}` : ""}</div>
               </div>
             ))}
           </div>)}
