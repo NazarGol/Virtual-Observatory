@@ -15,7 +15,9 @@ interface Props {
   exposureRef: (setExposure: (v: number) => void) => void;
   milkyWayPoints: { dir: Vec3 }[];
   bodies: BodyMarker[];
-  paths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[];
+  paths: { pts: Vec3[]; color: number; periodYears: number }[];
+  /** sim time driving the crawl phase of orbital tracks */
+  plotTime: number;
   projection: "gnomonic" | "fisheye" | "dome";
   horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };
   sun: { dirIcrs: Vec3 | null; radiusDeg: number };
@@ -48,6 +50,7 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setMilkyWayPoints(props.milkyWayPoints); }, [props.milkyWayPoints]);
   useEffect(() => { fieldRef.current?.setBodies(props.bodies); }, [props.bodies]);
   useEffect(() => { fieldRef.current?.setPaths(props.paths); }, [props.paths]);
+  useEffect(() => { fieldRef.current?.setPlotTime(props.plotTime); }, [props.plotTime]);
   useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
     [props.horizonBasis]);
   useEffect(() => { fieldRef.current?.setProjection(props.projection); }, [props.projection]);

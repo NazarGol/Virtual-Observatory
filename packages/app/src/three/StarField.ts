@@ -25,45 +25,43 @@ export interface BodyMarker {
 const R = 100;
 const R2D = 180 / Math.PI;
 
-// Selection ring in the RED signal plate (Phase 6R colour budget: red = active attention),
-// drawn dotted to sit in the stipple language.
-function ringTexture(): THREE.Texture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 64;
-  const g = c.getContext("2d")!;
-  g.fillStyle = "#f01428";
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2;
-    g.beginPath(); g.arc(32 + Math.cos(a) * 24, 32 + Math.sin(a) * 24, 2.2, 0, Math.PI * 2); g.fill();
+
+// --- ink plates (Phase 6R, multi-pen plotter logic: semantic, never decorative) ---
+export const INK = { white: "#f2efe6", gold: "#f0dc84", blush: "#f0c8a8", signal: "#f01428" } as const;
+export const INK_HEX = { gold: 0xf0dc84, blush: 0xf0c8a8, dimgold: 0x8a7d4a, signal: 0xf01428 } as const;
+
+/** Dotted circle helper for canvas glyphs. */
+function dottedCircle(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, n: number, dotR: number, color: string): void {
+  g.fillStyle = color;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    g.beginPath(); g.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, dotR, 0, Math.PI * 2); g.fill();
   }
+}
+
+/** The host star: the largest concentric dotted-ring glyph, unmistakable, GOLD plate. */
+function hostGlyphTexture(): THREE.Texture {
+  const S = 128, c = document.createElement("canvas");
+  c.width = c.height = S;
+  const g = c.getContext("2d")!;
+  g.fillStyle = INK.gold;
+  g.beginPath(); g.arc(S / 2, S / 2, 5, 0, Math.PI * 2); g.fill();
+  dottedCircle(g, S / 2, S / 2, 16, 10, 1.8, INK.gold);
+  dottedCircle(g, S / 2, S / 2, 30, 16, 1.8, INK.gold);
+  dottedCircle(g, S / 2, S / 2, 45, 24, 1.8, INK.gold);
+  dottedCircle(g, S / 2, S / 2, 60, 32, 1.6, INK.gold);
   return new THREE.CanvasTexture(c);
 }
 
-function sunTexture(): THREE.Texture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 128;
+/** Sibling planets: a dim gold diamond marker. */
+function siblingGlyphTexture(): THREE.Texture {
+  const S = 48, c = document.createElement("canvas");
+  c.width = c.height = S;
   const g = c.getContext("2d")!;
-  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grad.addColorStop(0, "rgba(255,246,214,1)");
-  grad.addColorStop(0.18, "rgba(255,214,120,0.85)");
-  grad.addColorStop(0.5, "rgba(255,180,80,0.25)");
-  grad.addColorStop(1, "rgba(255,170,70,0)");
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 128, 128);
-  return new THREE.CanvasTexture(c);
-}
-
-function discTexture(): THREE.Texture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 64;
-  const g = c.getContext("2d")!;
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.62, "rgba(255,255,255,0.95)");
-  grad.addColorStop(0.82, "rgba(255,255,255,0.35)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  g.fillStyle = grad;
-  g.beginPath(); g.arc(32, 32, 32, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = INK.gold; g.globalAlpha = 0.55; g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(S / 2, 6); g.lineTo(S - 6, S / 2); g.lineTo(S / 2, S - 6); g.lineTo(6, S / 2); g.closePath();
+  g.stroke();
   return new THREE.CanvasTexture(c);
 }
 
@@ -89,12 +87,14 @@ export class StarField {
   private labelGroup = new THREE.Group();
   private sunGroup = new THREE.Group();
   private bodyGroup = new THREE.Group();
-  private pathGroup = new THREE.Group();  // body trails / orbital tracks (B4)
-  private rawPaths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[] = [];
+  private pathGroup = new THREE.Group();  // crawling orbital tracks (Phase 6R)
+  private rawPaths: { pts: Vec3[]; color: number; periodYears: number }[] = [];
+  // per-path crawl state: projected polyline + a reusable dot buffer marched in loop()
+  private crawls: { proj: ([number, number, number] | null)[]; period: number; points: THREE.Points; buf: Float32Array }[] = [];
+  private plotTimeYears = 0;
   private groundGroup = new THREE.Group(); // dome ground (B8; twilight glow removed in 6R)
-  private ringTex = ringTexture();
-  private sunTex = sunTexture();
-  private discTex = discTexture();
+  private hostTex = hostGlyphTexture();
+  private sibTex = siblingGlyphTexture();
   private phaseTexCache = new Map<number, THREE.Texture>();
   private moonPhases: { sprite: THREE.Sprite; dir: Vec3; sunDir: Vec3 | null }[] = [];
   private rawSunDir: Vec3 | null = null;
@@ -352,10 +352,12 @@ export class StarField {
     this.geom.setAttribute("seed", new THREE.BufferAttribute(seed, 1));
   }
 
-  /** The host star's on-sky position (drives the sun glyph and, in dome, the ground). The
-   *  photographic glare wash is gone (Phase 6R): glare becomes drawn chart notation later. */
-  setSun(dirIcrs: Vec3 | null, _radiusDeg: number): void {
+  /** The host star's position + glare radius. Photographic glow is gone (Phase 6R): glare is
+   *  now CHART NOTATION — a faint gold dotted circle of the glare radius around the host. */
+  private glareRadiusDeg = 14;
+  setSun(dirIcrs: Vec3 | null, radiusDeg: number): void {
     this.rawSunDir = dirIcrs;
+    this.glareRadiusDeg = radiusDeg;
     this.layoutSun();
     this.layoutGround();
   }
@@ -363,12 +365,34 @@ export class StarField {
   private layoutSun(): void {
     this.sunGroup.clear();
     if (!this.rawSunDir) return;
-    const p = this.projectScene(this.rawSunDir);
-    if (!p) return;
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sunTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    sp.position.set(p[0], p[1], p[2]);
-    sp.scale.setScalar(this.mode === "gnomonic" ? 26 : 20);
-    this.sunGroup.add(sp);
+    // the glare radius as a small-circle of directions around the host, projected per-mode
+    const s = this.rawSunDir;
+    const up: Vec3 = Math.abs(s[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    const e1: Vec3 = [s[1] * up[2] - s[2] * up[1], s[2] * up[0] - s[0] * up[2], s[0] * up[1] - s[1] * up[0]];
+    const n1 = Math.hypot(...e1) || 1; e1[0] /= n1; e1[1] /= n1; e1[2] /= n1;
+    const e2: Vec3 = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+    const rad = (this.glareRadiusDeg * Math.PI) / 180, cr = Math.cos(rad), sr = Math.sin(rad);
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 72; i++) {
+      const a = (i / 72) * Math.PI * 2;
+      const d: Vec3 = [
+        cr * s[0] + sr * (Math.cos(a) * e1[0] + Math.sin(a) * e2[0]),
+        cr * s[1] + sr * (Math.cos(a) * e1[1] + Math.sin(a) * e2[1]),
+        cr * s[2] + sr * (Math.cos(a) * e1[2] + Math.sin(a) * e2[2]),
+      ];
+      const p = this.projectScene(d);
+      if (!p) { if (pts.length >= 2) this.flushGlare(pts); pts.length = 0; continue; }
+      pts.push(new THREE.Vector3(p[0], p[1], p[2]));
+    }
+    if (pts.length >= 2) this.flushGlare(pts);
+  }
+
+  private flushGlare(pts: THREE.Vector3[]): void {
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([...pts]),
+      new THREE.LineDashedMaterial({ color: INK_HEX.gold, transparent: true, opacity: 0.3, dashSize: 0.7, gapSize: 1.4 }));
+    line.computeLineDistances();
+    this.sunGroup.add(line);
   }
 
   /** Dome ground: black beyond the horizon and a hard horizon line (chart chrome). The
@@ -405,88 +429,114 @@ export class StarField {
     this.moonPhases = [];
     const host = this.rawBodies.find((b) => b.kind === "host_star");
     const hostDir = host ? host.dir : this.rawSunDir;
+    const perRad = this.mode === "gnomonic" ? R : this.mode === "fisheye" ? R / this.fisheyeMax : R / (Math.PI / 2);
     for (const b of this.rawBodies) {
       const p = this.projectScene(b.dir);
       if (!p) continue;
-      const theta = (b.diamDeg * Math.PI) / 180; // angular diameter, radians
-      const perRad = this.mode === "gnomonic" ? R : this.mode === "fisheye" ? R / this.fisheyeMax : R / (Math.PI / 2);
-      const size = Math.max(1.3, Math.min(45, theta * perRad)); // floor = a visible point
-      if (b.kind === "moon" && b.illum != null) {
-        // moon rendered as a lit phase; its terminator is oriented toward the host each frame
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.phaseTexture(Math.round(b.illum * 20)), transparent: true, depthWrite: false }));
+      const theta = (b.diamDeg * Math.PI) / 180; // true angular diameter, radians
+      if (b.kind === "host_star") {
+        // the largest concentric-ring glyph, unmistakable, GOLD
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.hostTex, transparent: true, depthWrite: false }));
+        sp.position.set(p[0], p[1], p[2]);
+        sp.scale.setScalar(Math.max(26, Math.min(60, theta * perRad * 3)));
+        this.bodyGroup.add(sp);
+      } else if (b.kind === "moon") {
+        // dotted-circle glyph sized by angular-size CLASS, phase drawn diagrammatically (BLUSH)
+        const sizeClass = b.diamDeg > 0.4 ? 24 : b.diamDeg > 0.15 ? 19 : b.diamDeg > 0.05 ? 14.5 : 11;
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: this.phaseTexture(Math.round((b.illum ?? 1) * 20)), transparent: true, depthWrite: false }));
         sprite.position.set(p[0], p[1], p[2]);
-        sprite.scale.setScalar(Math.max(3.5, size));
+        sprite.scale.setScalar(sizeClass);
         this.bodyGroup.add(sprite);
         this.moonPhases.push({ sprite, dir: b.dir, sunDir: hostDir });
       } else {
-        const color = b.kind === "host_star" ? 0xffe08a : b.kind === "moon" ? 0xd6dbe2 : 0x9fc0ff;
-        const disc = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.discTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-        disc.position.set(p[0], p[1], p[2]);
-        disc.scale.setScalar(size);
-        this.bodyGroup.add(disc);
+        // sibling planet: dim gold diamond marker
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sibTex, transparent: true, depthWrite: false }));
+        sp.position.set(p[0], p[1], p[2]);
+        sp.scale.setScalar(7.5);
+        this.bodyGroup.add(sp);
       }
-      const lab = makeTextSprite(b.name, b.kind === "host_star" ? "#ffe08a" : "#c8d2e0");
+      const lab = makeTextSprite(b.name.toUpperCase(), b.kind === "host_star" ? INK.gold : b.kind === "moon" ? INK.blush : "#a99a66");
       lab.position.set(p[0], p[1], p[2]);
       this.bodyGroup.add(lab);
     }
   }
 
-  /** Canonical moon-phase disc (lit hemisphere toward +x), cached per 5%% illumination
-   *  bucket; the sprite is rotated at render time so the lit side faces the host star. */
+  /** Diagrammatic moon-phase glyph (BLUSH plate): a dotted circle with the illuminated
+   *  fraction as a filled lune anchored lit-side +x — chart notation, not a lit 3D ball.
+   *  Cached per 5% bucket; the sprite is rotated so the lit side faces the host. */
   private phaseTexture(bucket: number): THREE.Texture {
     const cached = this.phaseTexCache.get(bucket);
     if (cached) return cached;
     const frac = Math.max(0, Math.min(1, bucket / 20));
-    const S = 64, c = document.createElement("canvas");
+    const S = 96, c = document.createElement("canvas");
     c.width = c.height = S;
     const g = c.getContext("2d")!;
-    const cx = S / 2, cy = S / 2, rad = S / 2 - 2;
-    g.fillStyle = "rgba(150,160,178,0.13)"; // dark side, faint (earthshine)
-    g.beginPath(); g.arc(cx, cy, rad, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "rgba(226,230,238,1)";    // sunlit side
-    g.beginPath();
-    g.arc(cx, cy, rad, -Math.PI / 2, Math.PI / 2, false); // the sun-facing (right) limb
-    const rx = rad * (1 - 2 * frac);                       // terminator ellipse (signed)
-    g.ellipse(cx, cy, Math.abs(rx), rad, 0, Math.PI / 2, -Math.PI / 2, rx > 0);
-    g.fill();
+    const cx = S / 2, cy = S / 2, rad = S / 2 - 8;
+    dottedCircle(g, cx, cy, rad, 18, 2.1, INK.blush);
+    if (frac > 0.02) {
+      g.fillStyle = INK.blush; g.globalAlpha = 0.62;
+      g.beginPath();
+      g.arc(cx, cy, rad - 5, -Math.PI / 2, Math.PI / 2, false);   // sun-facing (+x) limb
+      const rx = (rad - 5) * (1 - 2 * frac);                      // terminator ellipse (signed)
+      g.ellipse(cx, cy, Math.abs(rx), rad - 5, 0, Math.PI / 2, -Math.PI / 2, rx > 0);
+      g.fill();
+      g.globalAlpha = 1;
+    }
     const tex = new THREE.CanvasTexture(c);
     this.phaseTexCache.set(bucket, tex);
     return tex;
   }
 
-  /** On-sky tracks for bodies (B4): where each body travels over a span. Each polyline is
-   *  projected point-by-point and broken into visible segments so it clips cleanly in
-   *  fisheye/dome. Dim, drawn behind the body discs. */
-  setPaths(paths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[]): void {
+  /** Crawling orbital tracks (Phase 6R): each body's path over ONE of its own periods,
+   *  sampled evenly in time, drawn as MARCHING DOTS whose crawl speed is the body's TRUE
+   *  angular rate (the reference's marching-dots language driven by real dynamics). */
+  setPaths(paths: { pts: Vec3[]; color: number; periodYears: number }[]): void {
     this.rawPaths = paths;
+    this.pathGroup.clear();
+    this.crawls = [];
+    const M = 48; // marching dots per path
+    for (const path of paths) {
+      const buf = new Float32Array(M * 3);
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+      const points = new THREE.Points(geom, new THREE.PointsMaterial({
+        color: path.color, size: 2.6 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.8, depthWrite: false }));
+      points.frustumCulled = false;
+      this.pathGroup.add(points);
+      this.crawls.push({ proj: [], period: Math.max(path.periodYears, 1e-9), points, buf });
+    }
     this.layoutPaths();
   }
 
+  /** Reproject each path's polyline for the active projection (crawl positions are then
+   *  interpolated from it every frame in loop()). */
   private layoutPaths(): void {
-    this.pathGroup.clear();
-    for (const path of this.rawPaths) {
-      const mat = new THREE.LineBasicMaterial({ color: path.color, transparent: true, opacity: 0.5 });
-      let seg: THREE.Vector3[] = [];
-      const flush = () => {
-        if (seg.length >= 2) this.pathGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg), mat));
-        seg = [];
-      };
-      for (const d of path.pts) {
-        const p = this.projectScene(d);
-        if (p) seg.push(new THREE.Vector3(p[0], p[1], p[2]));
-        else flush();
+    for (let k = 0; k < this.crawls.length; k++) {
+      this.crawls[k]!.proj = this.rawPaths[k]!.pts.map((d) => this.projectScene(d));
+    }
+  }
+
+  /** The sim time that drives the crawl phase (the body's true angular rate). */
+  setPlotTime(tYears: number): void { this.plotTimeYears = tYears; }
+
+  private marchCrawls(): void {
+    const M = 48;
+    for (const c of this.crawls) {
+      const N = c.proj.length - 1;
+      if (N < 1) continue;
+      const frac = ((this.plotTimeYears / c.period) % 1 + 1) % 1;
+      const pos = c.buf;
+      for (let k = 0; k < M; k++) {
+        const u = (k / M + frac) % 1;
+        const x = u * N, i0 = Math.floor(x), t = x - i0;
+        const a = c.proj[i0], b = c.proj[Math.min(i0 + 1, N)];
+        if (!a || !b) { pos[k * 3] = 1e6; pos[k * 3 + 1] = 0; pos[k * 3 + 2] = 0; continue; }
+        pos[k * 3] = a[0] + (b[0] - a[0]) * t;
+        pos[k * 3 + 1] = a[1] + (b[1] - a[1]) * t;
+        pos[k * 3 + 2] = a[2] + (b[2] - a[2]) * t;
       }
-      flush();
-      // even-time tick marks: their spacing reads as speed (bunched = slow, spread = fast)
-      if (path.ticks && path.ticks.length) {
-        const pts: number[] = [];
-        for (const d of path.ticks) { const p = this.projectScene(d); if (p) pts.push(p[0], p[1], p[2]); }
-        if (pts.length) {
-          const g = new THREE.BufferGeometry();
-          g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pts), 3));
-          this.pathGroup.add(new THREE.Points(g, new THREE.PointsMaterial({ color: path.color, size: 3.2 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.85 })));
-        }
-      }
+      (c.points.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
     }
   }
 
@@ -545,18 +595,34 @@ export class StarField {
     this.mwGeom.attributes.position.needsUpdate = true;
   }
 
+  /** Selection rings SELF-DRAW: 16 red dots assemble around the star over ~0.45s (nothing
+   *  pops), then breathe at low amplitude. Births survive relayout (pan/time) so the draw-in
+   *  only replays when the selection itself changes. */
+  private selBirths: number[] = [];
   setSelection(dirs: Vec3[]): void {
+    const changed = dirs.length !== this.rawSel.length;
     this.rawSel = dirs;
+    if (changed) this.selBirths = dirs.map(() => performance.now());
     this.selGroup.clear();
-    for (const d of dirs) {
+    const base = this.mode === "gnomonic" ? 3.4 : 2.9;
+    dirs.forEach((d, i) => {
       const p = this.projectScene(d);
-      if (!p) continue;
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringTex, transparent: true, depthWrite: false }));
-      sp.position.set(p[0], p[1], p[2]);
-      const base = this.mode === "gnomonic" ? 6 : 5;
-      sp.userData.base = base; sp.scale.setScalar(base);
-      this.selGroup.add(sp);
-    }
+      if (!p) return;
+      const NPTS = 16;
+      const arr = new Float32Array(NPTS * 3);
+      for (let k = 0; k < NPTS; k++) {
+        const a = (k / NPTS) * Math.PI * 2;
+        arr[k * 3] = Math.cos(a) * base; arr[k * 3 + 1] = Math.sin(a) * base; arr[k * 3 + 2] = 0;
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+      const pts = new THREE.Points(geom, new THREE.PointsMaterial({
+        color: INK_HEX.signal, size: 2.6 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.95, depthWrite: false }));
+      pts.position.set(p[0], p[1], p[2]);
+      pts.userData.birth = this.selBirths[i] ?? performance.now();
+      pts.frustumCulled = false;
+      this.selGroup.add(pts);
+    });
   }
 
   private projArc(arc: Vec3[]): THREE.Vector3[] | null {
@@ -631,11 +697,19 @@ export class StarField {
           Math.atan2(dx * up.x + dy * up.y + dz * up.z, dx * right.x + dy * right.y + dz * right.z);
       }
     }
-    // gentle breathing pulse on selection rings (subtle motion, no bounce)
+    // selection rings: self-draw dot-by-dot, then breathe at low amplitude
     if (this.selGroup.children.length) {
-      const k = 1 + 0.11 * Math.sin(performance.now() * 0.005);
-      for (const c of this.selGroup.children) c.scale.setScalar(((c.userData.base as number) || 6) * k);
+      const now = performance.now();
+      const k = 1 + 0.08 * Math.sin(now * 0.004);
+      for (const c of this.selGroup.children) {
+        const born = (c.userData.birth as number) ?? now;
+        const reveal = Math.min(1, (now - born) / 450);
+        ((c as THREE.Points).geometry as THREE.BufferGeometry).setDrawRange(0, Math.max(1, Math.floor(16 * reveal)));
+        c.scale.setScalar(k);
+      }
     }
+    // orbital tracks: marching dots at each body's true angular rate
+    this.marchCrawls();
     this.renderer.render(this.scene, cam);
   };
 

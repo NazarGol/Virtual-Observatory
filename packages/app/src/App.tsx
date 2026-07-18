@@ -136,7 +136,7 @@ export function App() {
   const [epochPlaying, setEpochPlaying] = useState(false);
   const [localScale, setLocalScale] = useState(LOCAL_SCALES[1]!.years); // ±1 day
   const [localRate, setLocalRate] = useState(LOCAL_RATES[1]!.yps);      // 1 day/s
-  const [localPlaying, setLocalPlaying] = useState(false);
+  const [localPlaying, setLocalPlaying] = useState(true); // the map is ALIVE on open (6R)
   const [inertial, setInertial] = useState<InertialStar[]>([]);
   const [inertialEpoch, setInertialEpoch] = useState(0); // sim time the inertial sky was last computed at
   const [epochDelta, setEpochDelta] = useState(0);        // B5 comparator span (0 = off)
@@ -150,7 +150,7 @@ export function App() {
   const [fov, setFov] = useState(60);
   const [exposure, setExposure] = useState(0);
   const [showMilkyWay, setShowMilkyWay] = useState(true);
-  const [bodyTrails, setBodyTrails] = useState(false);
+  const [bodyTrails, setBodyTrails] = useState(true); // crawling orbit dots on by default (6R)
   const [scanReq, setScanReq] = useState<{ from: number; span: number } | null>(null);
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
@@ -258,29 +258,28 @@ export function App() {
     return { orbitYears, rotDays: rotSec / 86400, locked, type: worldVantage.type, name: worldVantage.worldName };
   }, [worldVantage]);
 
-  // Body trails (B4): each body's on-sky track over ONE OF ITS OWN periods (so fast moons
-  // aren't undersampled), with even-time tick marks whose spacing reads as orbital speed.
+  // Orbital tracks (Phase 6R): each body's on-sky path over ONE of its own periods, sampled
+  // evenly in time. The renderer draws them as dots CRAWLING at the body's true angular rate
+  // (fast moon = fast crawl). Ink plates: host path GOLD, moons BLUSH, siblings dim gold.
   const trailPaths = useMemo(() => {
-    if (!worldVantage || !bodyTrails) return [] as { pts: Vec3[]; color: number; ticks: Vec3[] }[];
+    if (!worldVantage || !bodyTrails) return [] as { pts: Vec3[]; color: number; periodYears: number }[];
     const world = worldVantage.world;
     const orbitYears = worldClock ? worldClock.orbitYears : 1;
     const Mp = Math.max(world.planet.mass_mearth * 3.003e-6, 1e-12); // planet mass in Msun
-    const colorOf = (k: string) => (k === "host_star" ? 0xffcf6b : k === "moon" ? 0x9fb0c8 : 0x9fc0ff);
+    const colorOf = (k: string) => (k === "host_star" ? 0xf0dc84 : k === "moon" ? 0xf0c8a8 : 0x8a7d4a);
     const periodOf = (name: string, kind: string): number => {
       if (kind === "moon") { const m = world.moons.find((mo) => mo.name === name); if (m) return Math.sqrt(m.orbit.a_au ** 3 / Mp); }
       return orbitYears; // host reflex + siblings ~ the planet's orbital period
     };
-    const N = 180, tickStep = Math.max(1, Math.round(N / 24));
-    const out: { pts: Vec3[]; color: number; ticks: Vec3[] }[] = [];
+    const N = 180;
+    const out: { pts: Vec3[]; color: number; periodYears: number }[] = [];
     for (const id of worldBodies(world, 0).map((b) => ({ name: b.name, kind: b.kind }))) {
-      const P = periodOf(id.name, id.kind), pts: Vec3[] = [], ticks: Vec3[] = [];
+      const P = periodOf(id.name, id.kind), pts: Vec3[] = [];
       for (let i = 0; i <= N; i++) {
         const b = worldBodies(world, (i / N) * P).find((x) => x.name === id.name);
-        if (!b) continue;
-        pts.push(b.direction_icrs as Vec3);
-        if (i % tickStep === 0) ticks.push(b.direction_icrs as Vec3);
+        if (b) pts.push(b.direction_icrs as Vec3);
       }
-      out.push({ pts, color: colorOf(id.kind), ticks });
+      out.push({ pts, color: colorOf(id.kind), periodYears: P });
     }
     return out;
   }, [worldVantage, bodyTrails, worldClock]);
@@ -337,17 +336,17 @@ export function App() {
   const starPoints: StarPoint[] = useMemo(
     () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag })), [inertial]);
 
-  // Epoch comparator (B5): ghost tracks from each fast mover's current position to where it
-  // drifts over the chosen span. Capped to the fastest movers so it stays legible + cheap.
+  // Epoch comparator (B5): ghost drift tracks of the fastest movers over the chosen span.
+  // Static dotted ink (periodYears huge => the renderer's crawl dots sit still along them).
   const driftPaths = useMemo(() => {
-    if (!epochDelta || !sky || !sessionInfo) return [] as { pts: Vec3[]; color: number }[];
+    if (!epochDelta || !sky || !sessionInfo) return [] as { pts: Vec3[]; color: number; periodYears: number }[];
     const obs = sessionInfo.observer;
     const movers = inertial.filter((s) => (pmById.get(s.id) ?? 0) > 15)
-      .sort((a, b) => (pmById.get(b.id) ?? 0) - (pmById.get(a.id) ?? 0)).slice(0, 1500);
-    const out: { pts: Vec3[]; color: number }[] = [];
+      .sort((a, b) => (pmById.get(b.id) ?? 0) - (pmById.get(a.id) ?? 0)).slice(0, 600);
+    const out: { pts: Vec3[]; color: number; periodYears: number }[] = [];
     for (const s of movers) {
       const d1 = directionAt(sky, obs, s.id, inertialEpoch + epochDelta);
-      if (d1) out.push({ pts: [s.direction_icrs, d1], color: 0x6f8496 });
+      if (d1) out.push({ pts: [s.direction_icrs, d1], color: 0x9aa4ad, periodYears: 1e12 });
     }
     return out;
   }, [epochDelta, sky, sessionInfo, inertial, inertialEpoch, pmById]);
@@ -535,7 +534,7 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]} plotTime={tYears}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
