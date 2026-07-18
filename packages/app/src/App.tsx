@@ -19,19 +19,19 @@ import {
 type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
-import { milkyWayGeometry, milkyWayBand } from "./milkyway";
+import { milkyWayGeometry, milkyWayStipple } from "./milkyway";
 import { comovingCandidates, anomalyCandidates, alignmentCandidates, candidatesFromStar, type Candidate } from "./analysis";
 import { shortcutFor, SHORTCUTS, type KbAction } from "./keyboard";
-import { setSoundEnabled, uiTick, uiSelect, uiClack, chime } from "./sound";
-import { geodesicArc, SENSORS, type StarPoint, type Sensor } from "./three/StarField";
+import { setSoundEnabled, uiTick, uiClack, chime } from "./sound";
+import { geodesicArc, type StarPoint } from "./three/StarField";
 
 const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1", survey: "vobs.survey.v1" };
 
 // Survey log (Gate B, B6): the human records candidate objects; unnamed ones get a running
-// VOEC-### designation. Compute proposes (the sky, the sensors); the human disposes (records).
+// VOEC-### designation. Compute proposes (the sky); the human disposes (records).
 interface SurveyEntry {
   id: string; designation: string; objectId: string;
-  raDeg: number; decDeg: number; mag: number; sensor: Sensor;
+  raDeg: number; decDeg: number; mag: number; sensor: string; // legacy field ("plot" for new records)
   atYears: number; note: string; createdAtYears: number;
 }
 const serializeSurvey = (e: SurveyEntry[]) => JSON.stringify(e);
@@ -78,24 +78,10 @@ const TOOL_LABEL: Record<Tool, string> = {
 };
 const MEASURE_TOOLS: Tool[] = ["angular_distance", "separation_position_angle", "alignment"];
 
-// Instrument sensors (Gate B, B2). Same real catalog fields, different response curve.
-const SENSOR_LABEL: Record<Sensor, string> = {
-  visible: "Visible", thermal: "Thermal", proper_motion: "Motion", distance: "Distance", photometric: "Photom.",
-};
 // Epoch comparator spans (B5): ghost drift tracks of the fastest movers over the span.
 const EPOCHS: { label: string; y: number }[] = [
   { label: "off", y: 0 }, { label: "10 kyr", y: 1e4 }, { label: "100 kyr", y: 1e5 }, { label: "1 Myr", y: 1e6 },
 ];
-const SENSOR_LEGEND: Record<Sensor, { q: string; cap: string; ramp?: string; ticks?: [string, string] }> = {
-  visible: { q: "What would the eye see?", cap: "Perceptual — true star colour (Gaia BP−RP), Reinhard tone-mapped brightness." },
-  thermal: { q: "Which stars are actually hot?", cap: "Hot O/B stars blaze; cool stars recede. Brightness weighted by Teff (from real colour); colour = temperature.",
-    ramp: "linear-gradient(90deg,#bcd8ff,#fff1bd,#ff6a38)", ticks: ["hot", "cool"] },
-  proper_motion: { q: "What's moving — and together?", cap: "Slow stars fade out, fast movers blaze (mas/yr, vantage-dependent). Co-moving groups from Analysis light up green.",
-    ramp: "linear-gradient(90deg,#273149,#ff6bec)", ticks: ["slow", "fast"] },
-  distance: { q: "How far is everything?", cap: "Near stars swell and warm; distant stars shrink and cool (real parallax, observer-relative).",
-    ramp: "linear-gradient(90deg,#ff8c57,#6199ff)", ticks: ["near", "far"] },
-  photometric: { q: "The true brightness ratios?", cap: "Linear detector — response ∝ flux. A few stars blaze, most vanish: the real dynamic range, uncompressed." },
-};
 
 function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
   try { const s = localStorage.getItem(key); return s ? parse(s) : fallback; } catch { return fallback; }
@@ -156,7 +142,6 @@ export function App() {
   const [epochDelta, setEpochDelta] = useState(0);        // B5 comparator span (0 = off)
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candScanned, setCandScanned] = useState(false);
-  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set()); // co-moving members -> Motion sensor
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [draft, setDraft] = useState<string[]>([]);
@@ -167,7 +152,6 @@ export function App() {
   const [showMilkyWay, setShowMilkyWay] = useState(true);
   const [bodyTrails, setBodyTrails] = useState(false);
   const [scanReq, setScanReq] = useState<{ from: number; span: number } | null>(null);
-  const [sensor, setSensor] = useState<Sensor>("visible");
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
   const [ctlOpen, setCtlOpen] = useState(true);
@@ -211,7 +195,7 @@ export function App() {
   }, [allBodies]);
   const GLARE_DEG = 14;
   // Milky Way band point cloud, oriented by the vantage (recomputed on relocation).
-  const mwPoints = useMemo(() => (showMilkyWay ? milkyWayBand(mw) : []), [mw, showMilkyWay]);
+  const mwPoints = useMemo(() => (showMilkyWay ? milkyWayStipple(mw) : []), [mw, showMilkyWay]);
   useEffect(() => {
     if (!sessionInfo) return;
     // Freeze Stage-1 (proper motion) when scrubbing/playing at sub-year scales -- only
@@ -351,8 +335,7 @@ export function App() {
     return m;
   }, [sky, sessionInfo]);
   const starPoints: StarPoint[] = useMemo(
-    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp, dist: s.distance_pc, pm: pmById.get(s.id) ?? 0, hl: highlightIds.has(s.id) ? 1 : 0 })),
-    [inertial, pmById, highlightIds]);
+    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag })), [inertial]);
 
   // Epoch comparator (B5): ghost tracks from each fast mover's current position to where it
   // drifts over the chosen span. Capped to the fastest movers so it stays legible + cheap.
@@ -370,10 +353,8 @@ export function App() {
   }, [epochDelta, sky, sessionInfo, inertial, inertialEpoch, pmById]);
 
   // B3: propose candidate regularities from what is currently in view. Human triggers it.
-  // co-moving group members feed the Motion sensor highlight (sensor ↔ analysis)
   const applyCandidates = (cs: Candidate[]) => {
     setCandidates(cs);
-    setHighlightIds(new Set(cs.filter((c) => c.kind === "co-moving").flatMap((c) => c.objectIds)));
     setCandScanned(true);
     if (cs.length) chime();
   };
@@ -500,7 +481,7 @@ export function App() {
     const designation = named ? focusMeta.name : `VOEC-${String(n).padStart(3, "0")}`;
     setSurvey((s) => [...s, {
       id: uid(), designation, objectId: focusId, raDeg: raOf(focusDir), decDeg: decOf(focusDir),
-      mag: focusMeta.mag, sensor, atYears: tYears, note: "", createdAtYears: tYears,
+      mag: focusMeta.mag, sensor: "plot", atYears: tYears, note: "", createdAtYears: tYears,
     }]);
     chime();
   };
@@ -508,7 +489,6 @@ export function App() {
   // Wire the keyboard action ids to handlers (sound calls no-op when audio is off).
   dispatchRef.current = (a: KbAction) => {
     switch (a.kind) {
-      case "sensor": setSensor(a.sensor); uiSelect(); break;
       case "projection": { const nx: Projection = projection === "gnomonic" ? "fisheye" : projection === "fisheye" ? "dome" : "gnomonic"; setProjection(nx); uiTick(); break; }
       case "zoom": nudgeFov(a.dir === 1 ? 1 / 1.4 : 1.4); break;
       case "playLocal": setLocalPlaying((p) => !p); uiClack(); break;
@@ -555,7 +535,7 @@ export function App() {
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]} sensor={sensor}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
@@ -573,7 +553,6 @@ export function App() {
             bodyTrails={bodyTrails} onBodyTrails={() => { setBodyTrails((v) => !v); uiTick(); }} observing={!!worldVantage}
             sound={sound} onSound={() => { const on = !sound; setSound(on); setSoundEnabled(on); uiTick(); }}
             onHelp={() => setShowHelp(true)}
-            sensor={sensor} onSensor={(s) => { setSensor(s); uiSelect(); }}
             projection={projection} onProjection={setProjection}
             selection={selection} draft={draft}
             onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
@@ -606,7 +585,7 @@ export function App() {
             onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
         </Section>
         <Section title="Survey log" meta={survey.length || null}>
-          <SurveyPanel entries={survey} focusName={focusName} sensor={sensor} onRecord={recordSurvey}
+          <SurveyPanel entries={survey} focusName={focusName} onRecord={recordSurvey}
             onJump={(t, id) => { goTo(t); setSelection([id]); setTool("select"); }}
             onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
         </Section>
@@ -642,7 +621,6 @@ function Toolbar(props: {
   showMilkyWay: boolean; onMilkyWay: () => void;
   bodyTrails: boolean; onBodyTrails: () => void; observing: boolean;
   sound: boolean; onSound: () => void; onHelp: () => void;
-  sensor: Sensor; onSensor: (s: Sensor) => void;
   projection: Projection; onProjection: (p: Projection) => void;
   selection: string[]; draft: string[];
   onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
@@ -681,23 +659,6 @@ function Toolbar(props: {
       {props.bodyTrails && props.observing && (
         <div className="faint" style={{ fontSize: 10.5, marginTop: 3 }}>trail dots = 1/24 of each body's orbit — bunched = slow, spread = fast.</div>
       )}
-      <div className="muted" style={{ marginTop: 8 }}>sensor</div>
-      <div className="seg" style={{ display: "flex", marginTop: 4 }}>
-        {SENSORS.map((s) => (
-          <button key={s} style={{ flex: 1 }} className={props.sensor === s ? "active" : ""}
-            onClick={() => props.onSensor(s)}>{SENSOR_LABEL[s]}</button>
-        ))}
-      </div>
-      <div className="legend">
-        <div className="cap" style={{ color: "var(--ink-dim)", fontWeight: 600 }}>▸ {SENSOR_LEGEND[props.sensor].q}</div>
-        <div className="cap">{SENSOR_LEGEND[props.sensor].cap}</div>
-        {SENSOR_LEGEND[props.sensor].ramp && (
-          <>
-            <div className="ramp" style={{ background: SENSOR_LEGEND[props.sensor].ramp }} />
-            <div className="ticks"><span>{SENSOR_LEGEND[props.sensor].ticks![0]}</span><span>{SENSOR_LEGEND[props.sensor].ticks![1]}</span></div>
-          </>
-        )}
-      </div>
       <div className="row" style={{ marginTop: 8 }}><span className="k">projection</span>
         <span className="btns">
           {(["gnomonic", "fisheye", "dome"] as Projection[]).map((p) =>
@@ -1008,13 +969,13 @@ function EventScanner(props: {
 
 /** Survey log (B6): the human's record of candidate objects. Unnamed → VOEC-###. */
 function SurveyPanel(props: {
-  entries: SurveyEntry[]; focusName: string | null; sensor: Sensor;
+  entries: SurveyEntry[]; focusName: string | null;
   onRecord: () => void; onJump: (t: number, id: string) => void; onDelete: (id: string) => void;
 }) {
   return (
     <>
       {props.focusName
-        ? <button onClick={props.onRecord} title="add the focused object to the survey log">+ record “{props.focusName}” · {SENSOR_LABEL[props.sensor]}</button>
+        ? <button onClick={props.onRecord} title="add the focused object to the survey log">+ record “{props.focusName}”</button>
         : <div className="muted">hover or select an object to record it</div>}
       {props.entries.length > 0 && (
         <div className="mlist" style={{ marginTop: 8 }}>
@@ -1022,7 +983,7 @@ function SurveyPanel(props: {
             <div key={e.id} className="mitem">
               <div className="top">
                 <button className="link" onClick={() => props.onJump(e.atYears, e.objectId)}>{e.designation}</button>
-                <span className="faint" style={{ fontSize: 11 }}>{e.sensor}<button className="x" onClick={() => props.onDelete(e.id)}>✕</button></span>
+                <span className="faint" style={{ fontSize: 11 }}><button className="x" onClick={() => props.onDelete(e.id)}>✕</button></span>
               </div>
               <div className="ids">{e.raDeg.toFixed(2)}° / {e.decDeg.toFixed(2)}° · m{e.mag.toFixed(1)} · {fmtT(e.atYears)}</div>
             </div>

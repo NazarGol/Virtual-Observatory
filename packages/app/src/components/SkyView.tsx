@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Vec3 } from "@vobs/engine";
-import { StarField, type StarPoint, type BodyMarker, type Sensor } from "../three/StarField";
+import { StarField, type StarPoint, type BodyMarker } from "../three/StarField";
 
 interface Props {
   stars: StarPoint[];
@@ -13,10 +13,9 @@ interface Props {
   onFov: (fov: number) => void;
   fovRef: (setFov: (f: number) => void) => void;
   exposureRef: (setExposure: (v: number) => void) => void;
-  milkyWayPoints: { dir: Vec3; brightness: number }[];
+  milkyWayPoints: { dir: Vec3 }[];
   bodies: BodyMarker[];
   paths: { pts: Vec3[]; color: number; ticks?: Vec3[] }[];
-  sensor: Sensor;
   projection: "gnomonic" | "fisheye" | "dome";
   horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };
   sun: { dirIcrs: Vec3 | null; radiusDeg: number };
@@ -49,7 +48,6 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setMilkyWayPoints(props.milkyWayPoints); }, [props.milkyWayPoints]);
   useEffect(() => { fieldRef.current?.setBodies(props.bodies); }, [props.bodies]);
   useEffect(() => { fieldRef.current?.setPaths(props.paths); }, [props.paths]);
-  useEffect(() => { fieldRef.current?.setSensor(props.sensor); }, [props.sensor]);
   useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
     [props.horizonBasis]);
   useEffect(() => { fieldRef.current?.setProjection(props.projection); }, [props.projection]);

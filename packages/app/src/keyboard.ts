@@ -2,10 +2,9 @@
 // unit-testable and the App just dispatches on the returned action id. Plain keys only
 // (no modifiers) — the instrument is single-handed on the keyboard while panning with the
 // mouse. The App ignores these while a text field is focused.
-import type { Sensor } from "./three/StarField";
+// (Number keys are reserved for the Phase 6R instrument MODES, wired in chrome step 3.)
 
 export type KbAction =
-  | { kind: "sensor"; sensor: Sensor }
   | { kind: "projection" }        // cycle flat -> fisheye -> dome
   | { kind: "zoom"; dir: 1 | -1 }
   | { kind: "playLocal" } | { kind: "playEpoch" }
@@ -15,13 +14,8 @@ export type KbAction =
   | { kind: "record" } | { kind: "propose" }
   | { kind: "controls" } | { kind: "help" };
 
-const SENSORS_BY_KEY: Record<string, Sensor> = {
-  "1": "visible", "2": "thermal", "3": "proper_motion", "4": "distance", "5": "photometric",
-};
-
 /** Map a KeyboardEvent.key to an action, or null if unbound. */
 export function shortcutFor(key: string): KbAction | null {
-  if (key in SENSORS_BY_KEY) return { kind: "sensor", sensor: SENSORS_BY_KEY[key]! };
   switch (key) {
     case "f": case "F": return { kind: "projection" };
     case "+": case "=": return { kind: "zoom", dir: 1 };
@@ -44,7 +38,6 @@ export function shortcutFor(key: string): KbAction | null {
 
 /** Human-readable shortcut list for the help overlay. */
 export const SHORTCUTS: { keys: string; label: string }[] = [
-  { keys: "1–5", label: "sensor: visible · thermal · motion · distance · photometric" },
   { keys: "F", label: "cycle projection (flat / fisheye / dome)" },
   { keys: "+ −", label: "zoom in / out" },
   { keys: "Space", label: "play / pause the local clock" },

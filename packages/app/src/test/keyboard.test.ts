@@ -2,10 +2,9 @@ import { describe, it, expect } from "vitest";
 import { shortcutFor } from "../keyboard";
 
 describe("shortcutFor", () => {
-  it("maps 1-5 to the five sensors in order", () => {
-    expect(shortcutFor("1")).toEqual({ kind: "sensor", sensor: "visible" });
-    expect(shortcutFor("3")).toEqual({ kind: "sensor", sensor: "proper_motion" });
-    expect(shortcutFor("5")).toEqual({ kind: "sensor", sensor: "photometric" });
+  it("leaves number keys unbound (reserved for Phase 6R instrument modes)", () => {
+    expect(shortcutFor("1")).toBeNull();
+    expect(shortcutFor("5")).toBeNull();
   });
   it("maps view + time controls", () => {
     expect(shortcutFor("f")).toEqual({ kind: "projection" });
