@@ -21,7 +21,7 @@ import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
 import { milkyWayGeometry, milkyWayStipple } from "./milkyway";
 import { comovingCandidates, anomalyCandidates, alignmentCandidates, candidatesFromStar, type Candidate } from "./analysis";
-import { shortcutFor, SHORTCUTS, type KbAction } from "./keyboard";
+import { shortcutFor, SHORTCUTS, MODES, type KbAction, type Mode } from "./keyboard";
 import { setSoundEnabled, uiTick, uiClack, chime } from "./sound";
 import { geodesicArc, type StarPoint } from "./three/StarField";
 
@@ -154,7 +154,9 @@ export function App() {
   const [scanReq, setScanReq] = useState<{ from: number; span: number } | null>(null);
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
-  const [ctlOpen, setCtlOpen] = useState(true);
+  const [mode, setMode] = useState<Mode>("observe");        // the modal instrument (6R)
+  const [viewDir, setViewDir] = useState<Vec3>([1, 0, 0]);  // view centre (compass tape)
+  const [ctlOpen, setCtlOpen] = useState(false);            // OBSERVE opens near-empty
   const [showHelp, setShowHelp] = useState(false);
   const [sound, setSound] = useState(false);
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
@@ -415,7 +417,8 @@ export function App() {
   const pick = useCallback((index: number | null) => {
     const id = index == null ? null : inertial[index]?.id ?? null;
     if (id == null) { if (tool === "select") setSelection([]); return; }
-    if (tool === "select") { setSelection([id]); return; }
+    // selecting an object arms the TARGET instrument (the UI is modal, 6R)
+    if (tool === "select") { setSelection([id]); setMode((m) => (m === "observe" ? "target" : m)); return; }
     if (tool === "label") { setPendingLabel(id); return; }
     if (tool === "figure") { setDraft((d) => [...d, id]); return; }
     if (tool === "alignment") { setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id])); return; }
@@ -485,9 +488,17 @@ export function App() {
     chime();
   };
 
+  // Switch instrument mode; tools live in MEASURE only, so leaving it disarms them.
+  const goMode = (m: Mode) => {
+    setMode(m);
+    if (m !== "measure") { setTool("select"); setDraft([]); setPendingLabel(null); }
+    uiTick();
+  };
+
   // Wire the keyboard action ids to handlers (sound calls no-op when audio is off).
   dispatchRef.current = (a: KbAction) => {
     switch (a.kind) {
+      case "mode": goMode(a.mode); break;
       case "projection": { const nx: Projection = projection === "gnomonic" ? "fisheye" : projection === "fisheye" ? "dome" : "gnomonic"; setProjection(nx); uiTick(); break; }
       case "zoom": nudgeFov(a.dir === 1 ? 1 / 1.4 : 1.4); break;
       case "playLocal": setLocalPlaying((p) => !p); uiClack(); break;
@@ -496,7 +507,12 @@ export function App() {
       case "milkyway": setShowMilkyWay((v) => !v); uiTick(); break;
       case "trails": if (worldVantage) { setBodyTrails((v) => !v); uiTick(); } break;
       case "gallery": setView("gallery"); break;
-      case "escape": if (view === "gallery") setView("instrument"); else if (showHelp) setShowHelp(false); else setSelection([]); break;
+      case "escape":
+        if (view === "gallery") setView("instrument");
+        else if (showHelp) setShowHelp(false);
+        else if (mode !== "observe") { goMode("observe"); setSelection([]); }
+        else setSelection([]);
+        break;
       case "record": recordSurvey(); break;
       case "propose": if (selection.length === 1) findFromStar(selection[0]!); break;
       case "controls": setCtlOpen((o) => !o); uiTick(); break;
@@ -513,10 +529,13 @@ export function App() {
       ? `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · ◑ no solar day`
       : `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · ${(localYears * 365.25 / worldClock.rotDays).toFixed(1)} local-days`)
     : fmtT(localYears);
+  // compass tape: azimuth of the view centre in the local horizon (gnomonic/fisheye; the
+  // dome's horizon carries its own cardinal letters)
+  const viewHz = apparatus && projection !== "dome" ? horizontalOf(apparatus.o, apparatus.obs, viewDir, tYears) : null;
 
   return (
     <div className="app">
-      <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ World gallery</button>
+      <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ Worlds</button>
       {showArrival && worldVantage && worldClock && (
         <ArrivalCard clock={worldClock} hostLabel={worldVantage.label} distPc={Math.hypot(...worldVantage.pos)}
           world={worldVantage.world} onClose={() => setShowArrival(false)} />
@@ -524,8 +543,7 @@ export function App() {
       {showHelp && <KbHelp onClose={() => setShowHelp(false)} />}
       {speculative && (
         <div className="speculative">
-          ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)}. Beyond the rectilinear model's validated range; these
-          positions are extrapolation, not data. (Galactic-orbit propagation extends this to ~1 Myr.)
+          ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)} · positions are extrapolation, not data
         </div>
       )}
       <SkyView
@@ -533,18 +551,32 @@ export function App() {
         figures={figureArcs} labels={labelSprites}
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
-        exposureRef={(fn) => (setExposureRef.current = fn)}
+        exposureRef={(fn) => (setExposureRef.current = fn)} onLook={setViewDir}
         milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]} plotTime={tYears}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
 
+      {/* --- chrome furniture: brackets, tape, world header, mode bar --- */}
+      <span className="bk tl" /><span className="bk tr" /><span className="bk bl" /><span className="bk br" />
+      {viewHz && <CompassTape azDeg={viewHz.azDeg} altDeg={viewHz.altDeg} />}
+      <WorldHeader worldClock={worldClock} hostLabel={worldVantage?.label ?? null} vantage={vantage} />
+      <NextEventChip scan={scan} t={tYears} observing={!!worldVantage} />
+      <div className="modebar">
+        {MODES.map((m, i) => (
+          <button key={m} className={mode === m ? "active" : ""} onClick={() => goMode(m)}>
+            <span className="num">{i + 1}</span>{m}
+          </button>
+        ))}
+      </div>
+
+      {/* --- instrument config (H) --- */}
       <div className="controls">
         <div className="cbar" onClick={() => setCtlOpen((o) => !o)}>
-          <span className="t">Instrument</span><span className="caret">{ctlOpen ? "▾ hide" : "▸ controls"}</span>
+          <span className="t">Config</span><span className="caret">{ctlOpen ? "▾" : "▸ H"}</span>
         </div>
         {ctlOpen && (
-          <Toolbar tool={tool} onTool={onTool} vantage={vantage}
+          <Toolbar vantage={vantage}
             setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
             worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
             fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
@@ -552,49 +584,73 @@ export function App() {
             bodyTrails={bodyTrails} onBodyTrails={() => { setBodyTrails((v) => !v); uiTick(); }} observing={!!worldVantage}
             sound={sound} onSound={() => { const on = !sound; setSound(on); setSoundEnabled(on); uiTick(); }}
             onHelp={() => setShowHelp(true)}
-            projection={projection} onProjection={setProjection}
-            selection={selection} draft={draft}
-            onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
-            pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
+            projection={projection} onProjection={setProjection} />
         )}
       </div>
 
-      <aside className="side">
-        <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG}
-          pm={focusId ? pmById.get(focusId) : undefined} />
-        <Section title="Analysis" meta={candidates.length || null} defaultOpen>
+      {/* --- the MODAL panel: each mode shows ONLY its own furniture --- */}
+      {mode === "target" && (
+        <ModePanel num={2} title="Target" onClose={() => goMode("observe")}>
+          <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG}
+            pm={focusId ? pmById.get(focusId) : undefined} />
+          <hr className="hair" />
+          {focusName && <div style={{ marginBottom: 8 }}><button onClick={recordSurvey}>+ record “{focusName}”</button></div>}
           <AnalysisPanel candidates={candidates} scanned={candScanned} onScan={findCandidates}
             anchorId={selection.length === 1 ? selection[0]! : null}
             anchorName={selection.length === 1 ? metaById.get(selection[0]!)?.name || selection[0]! : null}
             onProposeFrom={findFromStar}
             epochDelta={epochDelta} onEpoch={setEpochDelta}
             onSelect={(ids) => { setSelection(ids); setTool("select"); }} />
-        </Section>
-        <Section title="Event scanner" meta={worldVantage ? scan?.events.length ?? "" : "world only"}>
+        </ModePanel>
+      )}
+      {mode === "measure" && (
+        <ModePanel num={3} title="Measure" onClose={() => goMode("observe")}>
+          <MeasureDial />
+          <div className="btns" style={{ marginBottom: 8 }}>
+            {(["select", ...MEASURE_TOOLS, "figure", "label"] as Tool[]).map((t) =>
+              <button key={t} className={tool === t ? "active" : ""} onClick={() => onTool(t)}>{TOOL_LABEL[t]}</button>)}
+          </div>
+          {tool === "alignment" && <div style={{ marginBottom: 6 }}><button disabled={selection.length < 3} onClick={finishAlignment}>finish alignment ({selection.length})</button></div>}
+          {tool === "figure" && <FigureFinish draft={draft} onFinish={finishFigure} />}
+          {tool === "select" && selection.length >= 2 && <GroupFinish count={selection.length} onFinish={makeGroup} />}
+          {pendingLabelName && (
+            <div style={{ marginBottom: 6 }}>
+              <div className="muted">label “{pendingLabelName}”</div>
+              <InlineForm placeholder="label text" initial={pendingLabelName} onSubmit={submitLabel} onCancel={() => setPendingLabel(null)} />
+            </div>
+          )}
+          <Section title="Measurements" meta={results.length || null} defaultOpen>
+            <Measurements results={results} metaById={metaById}
+              onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
+          </Section>
+          <Section title="Annotations" meta={annotations.length || null}>
+            <Annotations annotations={annotations} figures={figures}
+              onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
+              onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
+          </Section>
+        </ModePanel>
+      )}
+      {mode === "events" && (
+        <ModePanel num={4} title="Events" onClose={() => goMode("observe")}>
           <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
             onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => { goTo(t); chime(); }} />
-        </Section>
-        <Section title="Measurements" meta={results.length || null}>
-          <Measurements results={results} metaById={metaById}
-            onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
-        </Section>
-        <Section title="Annotations" meta={annotations.length || null}>
-          <Annotations annotations={annotations} figures={figures}
-            onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
-            onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
-        </Section>
-        <Section title="Survey log" meta={survey.length || null}>
-          <SurveyPanel entries={survey} focusName={focusName} onRecord={recordSurvey}
-            onJump={(t, id) => { goTo(t); setSelection([id]); setTool("select"); }}
-            onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
-        </Section>
-        <Section title="Notebook" meta={(notebook.markers.length + notebook.notes.length) || null}>
-          <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
-            onJump={(t, ids) => { goTo(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
-            onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
-            onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
-        </Section>
-      </aside>
+        </ModePanel>
+      )}
+      {mode === "log" && (
+        <ModePanel num={5} title="Log" onClose={() => goMode("observe")}>
+          <Section title="Survey log" meta={survey.length || null} defaultOpen>
+            <SurveyPanel entries={survey} focusName={focusName} onRecord={recordSurvey}
+              onJump={(t, id) => { goTo(t); setSelection([id]); setTool("select"); }}
+              onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
+          </Section>
+          <Section title="Notebook" meta={(notebook.markers.length + notebook.notes.length) || null} defaultOpen>
+            <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
+              onJump={(t, ids) => { goTo(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
+              onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
+              onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
+          </Section>
+        </ModePanel>
+      )}
 
       <div className="timebars">
         <TimeControl label="epoch" value={epochYears} setValue={setEpochYears}
@@ -621,11 +677,7 @@ function Toolbar(props: {
   bodyTrails: boolean; onBodyTrails: () => void; observing: boolean;
   sound: boolean; onSound: () => void; onHelp: () => void;
   projection: Projection; onProjection: (p: Projection) => void;
-  selection: string[]; draft: string[];
-  onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
-  pendingLabelName: string | null; onSubmitLabel: (t: string) => void; onCancelLabel: () => void;
 }) {
-  const [naming, setNaming] = useState<null | "figure" | "group">(null);
   return (
     <div className="ctl">
       <div className="row"><span className="k">vantage</span>
@@ -670,58 +722,138 @@ function Toolbar(props: {
           <button onClick={props.onHelp} title="keyboard shortcuts (press ?)">⌨ keys</button>
         </span>
       </div>
-      <div className="muted" style={{ marginTop: 8 }}>tools</div>
-      <div className="btns" style={{ marginTop: 4 }}>
-        {(["select", ...MEASURE_TOOLS, "figure", "label"] as Tool[]).map((t) =>
-          <button key={t} className={props.tool === t ? "active" : ""} onClick={() => props.onTool(t)}>{TOOL_LABEL[t]}</button>)}
-      </div>
-      {props.tool === "alignment" && <div style={{ marginTop: 6 }}><button disabled={props.selection.length < 3} onClick={props.onFinishAlignment}>finish alignment ({props.selection.length})</button></div>}
-      {props.tool === "figure" && (naming === "figure"
-        ? <InlineForm placeholder="figure / constellation name" onSubmit={(n) => { props.onFinishFigure(n); setNaming(null); }} onCancel={() => setNaming(null)} />
-        : <div style={{ marginTop: 6 }}><button disabled={props.draft.length < 2} onClick={() => setNaming("figure")}>finish figure ({props.draft.length} stars)</button></div>)}
-      {props.tool === "select" && props.selection.length >= 2 && (naming === "group"
-        ? <InlineForm placeholder="group name" onSubmit={(n) => { props.onMakeGroup(n); setNaming(null); }} onCancel={() => setNaming(null)} />
-        : <div style={{ marginTop: 6 }}><button onClick={() => setNaming("group")}>group {props.selection.length} stars</button></div>)}
-      {props.pendingLabelName && (
-        <div style={{ marginTop: 6 }}>
-          <div className="muted">label “{props.pendingLabelName}”</div>
-          <InlineForm placeholder="label text" initial={props.pendingLabelName} onSubmit={props.onSubmitLabel} onCancel={props.onCancelLabel} />
-        </div>
-      )}
     </div>
   );
 }
 
+/** Compass / azimuth tape (avionics chrome): cardinal letters + 5° ticks scrolling with the
+ *  view-centre azimuth, bearing readout in the `241°T` pattern. */
+function CompassTape(props: { azDeg: number; altDeg: number }) {
+  const az = ((props.azDeg % 360) + 360) % 360;
+  const PX = 3.4; // px per degree
+  const ticks: ReactNode[] = [];
+  const lo = Math.floor((az - 44) / 5) * 5, hi = az + 44;
+  const CARD: Record<number, string> = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
+  for (let d = lo; d <= hi; d += 5) {
+    const x = 150 + (d - az) * PX;
+    if (x < 0 || x > 300) continue;
+    const norm = ((d % 360) + 360) % 360;
+    const major = norm % 45 === 0;
+    ticks.push(<span key={d} className={"tick" + (major ? " major" : "")} style={{ left: x }} />);
+    if (major && CARD[norm]) ticks.push(<span key={`l${d}`} className="tlabel" style={{ left: x }}>{CARD[norm]}</span>);
+  }
+  return (
+    <div className="tapewrap">
+      <div className="tape">{ticks}<span className="centermark" /></div>
+      <div className="bearing">{az.toFixed(0).padStart(3, "0")}°<span className="sup">T</span> · {props.altDeg >= 0 ? "+" : ""}{props.altDeg.toFixed(0)}°<span className="sup">ALT</span></div>
+    </div>
+  );
+}
+
+/** Typographic world header (top-left): where the instrument is standing. */
+function WorldHeader(props: { worldClock: WorldClock | null; hostLabel: string | null; vantage: Vantage }) {
+  const name = props.worldClock ? props.worldClock.name : props.vantage === "sol" ? "Sol III" : "Alpha Cen vantage";
+  const sub = props.worldClock
+    ? `${props.worldClock.type.replace(/_/g, " ")} · ${props.hostLabel ?? ""}${props.worldClock.locked ? " · ◑ locked" : ""}`
+    : "relocated catalog sky";
+  return (
+    <div className="worldhead">
+      <div className="name">{name}</div>
+      <div className="sub">{sub}</div>
+    </div>
+  );
+}
+
+/** Next-event countdown chip (OBSERVE furniture): the first scanned event still ahead. */
+function NextEventChip(props: { scan: Scan | null; t: number; observing: boolean }) {
+  if (!props.observing || !props.scan) return null;
+  const next = props.scan.events.find((e) => e.t > props.t);
+  if (!next) return null;
+  return (
+    <div className="nextevent">
+      <div className="sup">Next event</div>
+      <div className="val">{next.label} · <b>T−{fmtT(next.t - props.t)}</b></div>
+    </div>
+  );
+}
+
+/** The modal paper panel: each mode shows only its own furniture. */
+function ModePanel(props: { num: number; title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="modepanel">
+      <div className="mp-title"><span><span className="mnum">{props.num}</span> · {props.title}</span>
+        <button className="x" onClick={props.onClose}>×</button></div>
+      <div className="mp-body">{props.children}</div>
+    </div>
+  );
+}
+
+/** MEASURE dial ornament: the reference's protractor frame (decorative furniture, SVG). */
+function MeasureDial() {
+  const ticks: ReactNode[] = [];
+  for (let d = 0; d < 360; d += 10) {
+    const a = (d * Math.PI) / 180, major = d % 30 === 0;
+    const r1 = major ? 26 : 29, r2 = 32;
+    ticks.push(<line key={d} x1={40 + Math.cos(a) * r1} y1={36 + Math.sin(a) * r1}
+      x2={40 + Math.cos(a) * r2} y2={36 + Math.sin(a) * r2} stroke="#1a1a1a" strokeWidth={major ? 1.2 : 0.6} />);
+  }
+  return (
+    <div className="dial">
+      <svg width="80" height="72" viewBox="0 0 80 72">
+        <circle cx="40" cy="36" r="32" fill="none" stroke="#f01428" strokeWidth="1" strokeDasharray="2 3" />
+        <circle cx="40" cy="36" r="18" fill="none" stroke="#1a1a1a" strokeWidth="1" />
+        {ticks}
+        <line x1="22" y1="36" x2="58" y2="36" stroke="#f01428" strokeWidth="1" />
+      </svg>
+    </div>
+  );
+}
+
+function FigureFinish(props: { draft: string[]; onFinish: (name: string) => void }) {
+  const [naming, setNaming] = useState(false);
+  return naming
+    ? <InlineForm placeholder="figure / constellation name" onSubmit={(n) => { props.onFinish(n); setNaming(false); }} onCancel={() => setNaming(false)} />
+    : <div style={{ marginBottom: 6 }}><button disabled={props.draft.length < 2} onClick={() => setNaming(true)}>finish figure ({props.draft.length} stars)</button></div>;
+}
+
+function GroupFinish(props: { count: number; onFinish: (name: string) => void }) {
+  const [naming, setNaming] = useState(false);
+  return naming
+    ? <InlineForm placeholder="group name" onSubmit={(n) => { props.onFinish(n); setNaming(false); }} onCancel={() => setNaming(false)} />
+    : <div style={{ marginBottom: 6 }}><button onClick={() => setNaming(true)}>group {props.count} stars</button></div>;
+}
+
+/** TARGET readout: an avionics cluster of superscript-labelled cells (HEAD/MODE pattern). */
 function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; dir?: Vec3; meta?: InertialStar; sun: { dir: Vec3; altDeg: number } | null; glareDeg: number; pm?: number }) {
-  if (!props.dir || !props.meta || !props.o || !props.obs) return <div className="panel"><h2>Readout</h2><div className="muted">hover or select a star</div></div>;
+  if (!props.dir || !props.meta || !props.o || !props.obs) return <div className="muted">select or hover an object to target it</div>;
   const d = props.dir, m = props.meta;
   const h = horizontalOf(props.o, props.obs, d, props.t);
   const rst = riseSetOf(props.o, props.obs, d, props.t);
-  const ev = rst.circumpolar ? "circumpolar" : rst.neverRises ? "never rises"
-    : `rise ${fmtH(rst.riseYears!, props.t)}, set ${fmtH(rst.setYears!, props.t)}`;
+  const ev = rst.circumpolar ? "CIRCUMPOLAR" : rst.neverRises ? "NEVER RISES"
+    : `${fmtH(rst.riseYears!, props.t)} / ${fmtH(rst.setYears!, props.t)}`;
   let heliacal: { elong: number; washed: boolean; sunUp: boolean } | null = null;
   if (props.sun) {
     const s = props.sun.dir;
     const elong = Math.acos(Math.max(-1, Math.min(1, d[0] * s[0] + d[1] * s[1] + d[2] * s[2]))) * R2D;
     heliacal = { elong, sunUp: props.sun.altDeg > 0, washed: props.sun.altDeg > -2 && elong < props.glareDeg };
   }
+  const cell = (sup: string, val: string, warn = false) => (
+    <span className="avcell"><span className="sup">{sup}</span><span className={"val" + (warn ? " warn" : "")}>{val}</span></span>
+  );
   return (
-    <div className="panel">
-      <h2>Readout</h2>
-      <div className="row"><span className="k">object</span><span className="v">{m.name || m.id}</span></div>
-      <div className="row"><span className="k">RA / Dec</span><span className="v">{raOf(d).toFixed(2)}° / {decOf(d).toFixed(2)}°</span></div>
-      <div className="row"><span className="k">alt / az</span><span className="v">{h.altDeg.toFixed(2)}° / {h.azDeg.toFixed(2)}°</span></div>
-      <div className="row"><span className="k">magnitude</span><span className="v">{m.mag.toFixed(2)}</span></div>
-      <div className="row"><span className="k">distance</span><span className="v">{m.distance_pc.toFixed(2)} pc</span></div>
-      {props.pm != null && <div className="row"><span className="k">proper motion</span><span className="v">{props.pm < 1000 ? `${props.pm.toFixed(1)} mas/yr` : `${(props.pm / 1000).toFixed(2)} ″/yr`}</span></div>}
-      <div className="row"><span className="k">transit alt</span><span className="v">{rst.transitAltitudeDeg.toFixed(1)}°</span></div>
-      <div className="row"><span className="k">events</span><span className="v">{ev}</span></div>
-      {heliacal && (
-        <div className="row"><span className="k">sun elong.</span>
-          <span className="v">{heliacal.elong.toFixed(1)}°{heliacal.washed ? " · lost in glare" : heliacal.sunUp ? " · clear of the sun" : ""}</span>
-        </div>
-      )}
-    </div>
+    <>
+      <div style={{ marginBottom: 8, fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase" }}>{m.name || m.id}</div>
+      <div className="avgrid">
+        {cell("RA / Dec", `${raOf(d).toFixed(2)}° ${decOf(d).toFixed(2)}°`)}
+        {cell("Alt / Az", `${h.altDeg.toFixed(1)}° ${h.azDeg.toFixed(1)}°`)}
+        {cell("Mag", m.mag.toFixed(2))}
+        {cell("Dist", `${m.distance_pc.toFixed(2)} pc`)}
+        {props.pm != null ? cell("PM", props.pm < 1000 ? `${props.pm.toFixed(1)} mas/yr` : `${(props.pm / 1000).toFixed(2)} ″/yr`) : null}
+        {cell("Transit", `${rst.transitAltitudeDeg.toFixed(1)}°`)}
+        {cell("Rise / Set", ev)}
+        {heliacal ? cell("Sun elong", `${heliacal.elong.toFixed(1)}°${heliacal.washed ? " · IN GLARE" : ""}`, heliacal.washed) : null}
+      </div>
+    </>
   );
 }
 function fmtH(e: number, now: number) { const h = hoursFromNow(e, now); return `${h >= 0 ? "+" : ""}${h.toFixed(1)} h`; }

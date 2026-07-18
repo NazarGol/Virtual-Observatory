@@ -69,6 +69,8 @@ export class StarField {
   onHover?: (index: number | null) => void;
   onPick?: (index: number | null) => void;
   onView?: (fovDeg: number) => void;
+  /** Fires with the view-centre direction (ICRS) on pan/projection — drives the compass tape. */
+  onLook?: (dir: Vec3) => void;
 
   private container: HTMLElement;
   private renderer: THREE.WebGLRenderer;
@@ -226,6 +228,7 @@ export class StarField {
     this.updateOrtho();
     this.relayout();
     this.onView?.(this.fov);
+    this.onLook?.(this.lookDir());
   }
   getProjection(): "gnomonic" | "fisheye" | "dome" { return this.mode; }
 
@@ -254,6 +257,7 @@ export class StarField {
       if (this.mode === "gnomonic") this.applyLook();
       else if (this.mode === "fisheye") { this.updateViewBasis(); this.relayout(); }
       // dome is fixed to the local alt/az frame -- pan does not apply
+      this.onLook?.(this.lookDir());
     });
     el.addEventListener("wheel", (e) => { this.setFov(this.fov * (e.deltaY > 0 ? 1.1 : 1 / 1.1)); }, { passive: true });
   }
@@ -262,6 +266,12 @@ export class StarField {
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
     const cp = Math.cos(this.pitch);
     this.camera.lookAt(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
+  }
+
+  /** Current view-centre direction in world (ICRS) coordinates. */
+  lookDir(): Vec3 {
+    const cp = Math.cos(this.pitch);
+    return [Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp];
   }
 
   setFov(fovDeg: number): void {
@@ -415,6 +425,14 @@ export class StarField {
       new THREE.LineBasicMaterial({ color: 0xf0ece1, transparent: true, opacity: 0.6 }));
     hz.renderOrder = 0;
     this.groundGroup.add(hz);
+    // in dome the horizon IS the compass: cardinal letters just beyond the edge
+    for (const [az, letter] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]] as [number, string][]) {
+      const a = (az * Math.PI) / 180;
+      const lab = makeTextSprite(letter, "#f2efe6");
+      lab.center.set(0.5, 0.5);
+      lab.position.set(Math.sin(a) * R * 1.07, Math.cos(a) * R * 1.07, 0.2);
+      this.groundGroup.add(lab);
+    }
   }
 
   /** Host star, moons, sibling planets -- drawn in every projection at their correct angular

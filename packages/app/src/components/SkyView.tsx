@@ -11,6 +11,7 @@ interface Props {
   onHoverIndex: (i: number | null) => void;
   onPickIndex: (i: number | null) => void;
   onFov: (fov: number) => void;
+  onLook: (dir: Vec3) => void;
   fovRef: (setFov: (f: number) => void) => void;
   exposureRef: (setExposure: (v: number) => void) => void;
   milkyWayPoints: { dir: Vec3 }[];
@@ -34,6 +35,7 @@ export function SkyView(props: Props) {
     field.onHover = (i) => cb.current.onHoverIndex(i);
     field.onPick = (i) => cb.current.onPickIndex(i);
     field.onView = (f) => cb.current.onFov(f);
+    field.onLook = (d) => cb.current.onLook(d);
     fieldRef.current = field;
     cb.current.fovRef((f) => field.setFov(f));
     cb.current.exposureRef((v) => field.setExposure(v));
