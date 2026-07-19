@@ -17,6 +17,7 @@ interface Props {
   pulseRef: (pulse: (dirs: Vec3[]) => void) => void;
   arrivalRef: (begin: () => void) => void;
   links: Vec3[][];
+  drift: { a: Vec3; b: Vec3 }[];
   milkyWayPoints: { dir: Vec3 }[];
   bodies: BodyMarker[];
   paths: { pts: Vec3[]; color: number; periodYears: number }[];
@@ -59,6 +60,7 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setPaths(props.paths); }, [props.paths]);
   useEffect(() => { fieldRef.current?.setPlotTime(props.plotTime); }, [props.plotTime]);
   useEffect(() => { fieldRef.current?.setLinkLines(props.links); }, [props.links]);
+  useEffect(() => { fieldRef.current?.setDriftTracks(props.drift); }, [props.drift]);
   useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
     [props.horizonBasis]);
   useEffect(() => { fieldRef.current?.setProjection(props.projection); }, [props.projection]);

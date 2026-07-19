@@ -37,6 +37,15 @@ html, body, #root {
 .app { display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr auto; height: 100%; }
 .sky { position: relative; grid-row: 1; overflow: hidden; cursor: crosshair; background: var(--ground); }
 .sky canvas { display: block; }
+/* the whole viewport is an instrument SURFACE: restrained grain + scanlines + vignette */
+.sky::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.014) 0 1px, transparent 1px 3px);
+}
+.sky::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,.4) 100%);
+}
 
 /* ---- furniture self-draw (nothing pops) ---- */
 @keyframes vo-fade-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
@@ -48,10 +57,10 @@ html, body, #root {
 }
 
 /* ---- corner brackets framing the viewport ---- */
-.bk { position: absolute; width: 26px; height: 26px; z-index: 5; pointer-events: none; opacity: .8; }
+.bk { position: absolute; width: 38px; height: 38px; z-index: 5; pointer-events: none; }
 .bk::before, .bk::after { content: ""; position: absolute; background: var(--ink); }
-.bk::before { width: 26px; height: 1.5px; animation: vo-draw-w .5s ease both; }
-.bk::after  { width: 1.5px; height: 26px; animation: vo-draw-h .5s ease both; }
+.bk::before { width: 38px; height: 2px; animation: vo-draw-w .5s ease both; }
+.bk::after  { width: 2px; height: 38px; animation: vo-draw-h .5s ease both; }
 .bk.tl { top: 10px; left: 12px; }   .bk.tl::before { top: 0; left: 0; } .bk.tl::after { top: 0; left: 0; }
 .bk.tr { top: 10px; right: 12px; }  .bk.tr::before { top: 0; right: 0; } .bk.tr::after { top: 0; right: 0; }
 .bk.bl { bottom: 10px; left: 12px; } .bk.bl::before { bottom: 0; left: 0; } .bk.bl::after { bottom: 0; left: 0; }
@@ -80,6 +89,13 @@ html, body, #root {
 .avgrid { display: flex; flex-wrap: wrap; gap: 9px 18px; }
 .modepanel .avcell .sup { color: var(--paper-dim); }
 .modepanel .avcell .val { color: var(--paper-ink); }
+
+/* ---- status strip (bottom centre): the avionics readout line ---- */
+.statusbar { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: flex; gap: 28px; align-items: flex-end; pointer-events: none;
+  animation: vo-fade-in .5s ease both; }
+.statusbar .sup { color: rgba(240, 20, 40, .8); }
+.statusbar .val { font-size: 11.5px; }
 
 /* ---- mode bar (bottom-left margin cluster) ---- */
 .modebar { position: absolute; bottom: 12px; left: 46px; z-index: 6; display: flex; gap: 2px;

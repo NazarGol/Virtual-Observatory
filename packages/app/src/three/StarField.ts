@@ -222,6 +222,7 @@ export class StarField {
     this.layoutSun();
     this.layoutBodies();
     this.layoutPaths();
+    this.layoutDrift();
     this.layoutGround();
     this.layoutLinks();
   }
@@ -305,11 +306,11 @@ export class StarField {
           void main(){
             vCls = cls; vRank = rank; vSeed = seed;
             float ps =
-              rank > 0.5 ? mix(46.0, 26.0, clamp((rank - 1.0) / 19.0, 0.0, 1.0)) :
-              cls > 3.5 ? 16.0 :
-              cls > 2.5 ? 5.4 :
-              cls > 1.5 ? 3.8 :
-              cls > 0.5 ? 2.6 : 1.7;
+              rank > 0.5 ? mix(30.0, 18.0, clamp((rank - 1.0) / 9.0, 0.0, 1.0)) :
+              cls > 3.5 ? 10.0 :
+              cls > 2.5 ? 4.6 :
+              cls > 1.5 ? 3.2 :
+              cls > 0.5 ? 2.2 : 1.4;
             // ARRIVAL SELF-PLOT: the chart draws itself, brightest classes first, with a
             // small per-star jitter so each class stipples in rather than popping at once.
             float delay =
@@ -332,21 +333,21 @@ export class StarField {
             float r = length(q);
             float ink;
             if (vRank > 0.5) {          // ringed node: core + counter-rotating dotted rings
-              float rot = (mod(vRank, 2.0) * 2.0 - 1.0) * (0.05 + 0.10 * fract(vSeed * 7.31));
+              float rot = (mod(vRank, 2.0) * 2.0 - 1.0) * (0.04 + 0.07 * fract(vSeed * 7.31));
               float ph = vSeed * 6.2832 + uTime * rot;
-              ink = 1.0 - smoothstep(0.055, 0.085, r);
-              ink = max(ink, ringInk(q, 0.17, 0.055, 9.0, ph));
-              ink = max(ink, ringInk(q, 0.30, 0.055, 15.0, -ph * 0.7));
-              if (vRank < 7.5) ink = max(ink, ringInk(q, 0.43, 0.055, 21.0, ph * 0.5));
+              ink = 1.0 - smoothstep(0.06, 0.09, r);
+              ink = max(ink, ringInk(q, 0.22, 0.06, 10.0, ph));
+              ink = max(ink, ringInk(q, 0.40, 0.06, 16.0, -ph * 0.7));
+              if (vRank < 3.5) ink = max(ink, 0.7 * ringInk(q, 0.31, 0.05, 13.0, ph * 0.5));
             } else if (vCls > 3.5) {    // bright: dot + one fine dotted ring
-              ink = 1.0 - smoothstep(0.10, 0.15, r);
-              ink = max(ink, ringInk(q, 0.34, 0.06, 11.0, vSeed * 6.2832));
+              ink = 1.0 - smoothstep(0.11, 0.16, r);
+              ink = max(ink, ringInk(q, 0.36, 0.07, 10.0, vSeed * 6.2832));
             } else {                    // stipple dot
               ink = 1.0 - smoothstep(0.34, 0.48, r);
             }
-            float a = ink * (vCls < 0.5 && vRank < 0.5 ? 0.72 : 0.95);
+            float a = ink * (vCls < 0.5 && vRank < 0.5 ? 0.6 : 0.88);
             if (a < 0.02) discard;
-            gl_FragColor = vec4(vec3(0.96), a);
+            gl_FragColor = vec4(vec3(0.95), a);
           }`,
       });
       this.points = new THREE.Points(this.geom, this.starMat);
@@ -411,7 +412,7 @@ export class StarField {
   private flushGlare(pts: THREE.Vector3[]): void {
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([...pts]),
-      new THREE.LineDashedMaterial({ color: INK_HEX.gold, transparent: true, opacity: 0.3, dashSize: 0.7, gapSize: 1.4 }));
+      new THREE.LineDashedMaterial({ color: INK_HEX.gold, transparent: true, opacity: 0.18, dashSize: 0.7, gapSize: 1.6 }));
     line.computeLineDistances();
     this.sunGroup.add(line);
   }
@@ -433,7 +434,7 @@ export class StarField {
       new THREE.BufferGeometry().setFromPoints(Array.from({ length: 129 }, (_, i) => {
         const a = (i / 128) * Math.PI * 2; return new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, 0);
       })),
-      new THREE.LineBasicMaterial({ color: 0xf0ece1, transparent: true, opacity: 0.6 }));
+      new THREE.LineBasicMaterial({ color: 0xf0ece1, transparent: true, opacity: 0.3 }));
     hz.renderOrder = 0;
     this.groundGroup.add(hz);
     // in dome the horizon IS the compass: cardinal letters just beyond the edge
@@ -549,6 +550,47 @@ export class StarField {
   /** The sim time that drives the crawl phase (the body's true angular rate). */
   setPlotTime(tYears: number): void { this.plotTimeYears = tYears; }
 
+  /** Epoch-drift ghost tracks: where the fast movers drift over the comparator span. ONE
+   *  Points object for the whole layer (hundreds of segments, a single draw call), dotted
+   *  dim white — the star field's own trajectories. */
+  private driftPts?: THREE.Points;
+  private driftGeom?: THREE.BufferGeometry;
+  private rawDrift: { a: Vec3; b: Vec3 }[] = [];
+  setDriftTracks(segs: { a: Vec3; b: Vec3 }[]): void {
+    this.rawDrift = segs;
+    if (!this.driftPts) {
+      this.driftGeom = new THREE.BufferGeometry();
+      this.driftPts = new THREE.Points(this.driftGeom, new THREE.PointsMaterial({
+        color: 0xffffff, size: 1.5 * this.dpr, sizeAttenuation: false,
+        transparent: true, opacity: 0.4, depthWrite: false }));
+      this.driftPts.frustumCulled = false;
+      this.driftPts.renderOrder = -1;
+      this.scene.add(this.driftPts);
+    }
+    this.driftPts.visible = segs.length > 0;
+    this.layoutDrift();
+  }
+
+  private layoutDrift(): void {
+    if (!this.driftGeom) return;
+    const K = 10; // dots per track
+    const buf = new Float32Array(this.rawDrift.length * K * 3);
+    let n = 0;
+    for (const s of this.rawDrift) {
+      const pa = this.projectScene(s.a), pb = this.projectScene(s.b);
+      if (!pa || !pb) continue;
+      for (let k = 0; k < K; k++) {
+        const t = k / (K - 1);
+        buf[n++] = pa[0] + (pb[0] - pa[0]) * t;
+        buf[n++] = pa[1] + (pb[1] - pa[1]) * t;
+        buf[n++] = pa[2] + (pb[2] - pa[2]) * t;
+      }
+    }
+    this.driftGeom.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+    this.driftGeom.setDrawRange(0, n / 3);
+    this.driftGeom.attributes.position!.needsUpdate = true;
+  }
+
   /** Replay the arrival self-plot: stars populate by brightness class, orbits trace in. */
   beginArrival(): void { this.arrivalStart = performance.now(); }
 
@@ -646,8 +688,8 @@ export class StarField {
     if (!this.mwPoints) {
       this.mwGeom = new THREE.BufferGeometry();
       const mat = new THREE.PointsMaterial({
-        color: 0xffffff, size: 1.6 * this.dpr, sizeAttenuation: false,
-        transparent: true, opacity: 0.4, depthWrite: false,
+        color: 0xffffff, size: 1.4 * this.dpr, sizeAttenuation: false,
+        transparent: true, opacity: 0.3, depthWrite: false,
       });
       this.mwPoints = new THREE.Points(this.mwGeom, mat);
       this.mwPoints.frustumCulled = false;
@@ -671,34 +713,50 @@ export class StarField {
     this.mwGeom.attributes.position.needsUpdate = true;
   }
 
-  /** Selection rings SELF-DRAW: 16 red dots assemble around the star over ~0.45s (nothing
-   *  pops), then breathe at low amplitude. Births survive relayout (pan/time) so the draw-in
-   *  only replays when the selection itself changes. */
-  private selBirths: number[] = [];
+  /** Selection (Phase 6R red budget: red = THE active object only). The primary selection
+   *  gets a thin red bracket-corner targeting box that SELF-DRAWS; every other selected
+   *  object (co-moving groups, alignments) gets a small quiet blush dot — never red. */
+  private selBirth = 0;
   setSelection(dirs: Vec3[]): void {
-    const changed = dirs.length !== this.rawSel.length;
+    const changed = dirs.length !== this.rawSel.length || (dirs[0] !== this.rawSel[0]);
     this.rawSel = dirs;
-    if (changed) this.selBirths = dirs.map(() => performance.now());
+    if (changed) this.selBirth = performance.now();
     this.selGroup.clear();
-    const base = this.mode === "gnomonic" ? 3.4 : 2.9;
-    dirs.forEach((d, i) => {
-      const p = this.projectScene(d);
-      if (!p) return;
-      const NPTS = 16;
-      const arr = new Float32Array(NPTS * 3);
-      for (let k = 0; k < NPTS; k++) {
-        const a = (k / NPTS) * Math.PI * 2;
-        arr[k * 3] = Math.cos(a) * base; arr[k * 3 + 1] = Math.sin(a) * base; arr[k * 3 + 2] = 0;
+    if (!dirs.length) return;
+    // primary: the reference's targeting box — 4 bracket corners, red, draw-in
+    const p0 = this.projectScene(dirs[0]!);
+    if (p0) {
+      const s = this.mode === "gnomonic" ? 4.2 : 3.6, arm = s * 0.7;
+      const seg: number[] = [];
+      for (const [cx, cy] of [[-s, -s], [s, -s], [s, s], [-s, s]]) {
+        seg.push(cx!, cy!, 0, cx! - Math.sign(cx!) * arm, cy!, 0);
+        seg.push(cx!, cy!, 0, cx!, cy! - Math.sign(cy!) * arm, 0);
       }
       const geom = new THREE.BufferGeometry();
-      geom.setAttribute("position", new THREE.BufferAttribute(arr, 3));
-      const pts = new THREE.Points(geom, new THREE.PointsMaterial({
-        color: INK_HEX.signal, size: 2.6 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.95, depthWrite: false }));
-      pts.position.set(p[0], p[1], p[2]);
-      pts.userData.birth = this.selBirths[i] ?? performance.now();
-      pts.frustumCulled = false;
-      this.selGroup.add(pts);
-    });
+      geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(seg), 3));
+      const box = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
+        color: INK_HEX.signal, transparent: true, opacity: 0.9 }));
+      box.position.set(p0[0], p0[1], p0[2]);
+      box.userData.reticle = true;
+      box.frustumCulled = false;
+      this.selGroup.add(box);
+    }
+    // secondaries: one quiet blush dot layer (a proposed group is a suggestion, not a siren)
+    if (dirs.length > 1) {
+      const pos: number[] = [];
+      for (let i = 1; i < dirs.length; i++) {
+        const p = this.projectScene(dirs[i]!);
+        if (p) pos.push(p[0], p[1], p[2]);
+      }
+      if (pos.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
+        const pts = new THREE.Points(g, new THREE.PointsMaterial({
+          color: INK_HEX.blush, size: 3 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.7, depthWrite: false }));
+        pts.frustumCulled = false;
+        this.selGroup.add(pts);
+      }
+    }
   }
 
   private projArc(arc: Vec3[]): THREE.Vector3[] | null {
@@ -776,18 +834,15 @@ export class StarField {
           Math.atan2(dx * up.x + dy * up.y + dz * up.z, dx * right.x + dy * right.y + dz * right.z);
       }
     }
-    // selection rings: self-draw dot-by-dot, breathe at low amplitude, rotate in DETENTS
-    // (physics glides, the machine ticks)
+    // targeting box: self-draws corner-by-corner, closes onto the star, breathes quietly
     if (this.selGroup.children.length) {
       const now = performance.now();
-      const k = 1 + 0.08 * Math.sin(now * 0.004);
-      const detent = Math.floor(now / 700) * (Math.PI / 12); // 15° steps, one per 0.7s
+      const reveal = Math.min(1, (now - this.selBirth) / 350);
       for (const c of this.selGroup.children) {
-        const born = (c.userData.birth as number) ?? now;
-        const reveal = Math.min(1, (now - born) / 450);
-        ((c as THREE.Points).geometry as THREE.BufferGeometry).setDrawRange(0, Math.max(1, Math.floor(16 * reveal)));
-        c.scale.setScalar(k);
-        c.rotation.z = detent;
+        if (!c.userData.reticle) continue;
+        ((c as THREE.LineSegments).geometry as THREE.BufferGeometry)
+          .setDrawRange(0, Math.max(4, Math.floor(16 * reveal / 4) * 4));
+        c.scale.setScalar((1 + (1 - reveal) * 0.8) * (1 + 0.045 * Math.sin(now * 0.003)));
       }
     }
     // one-shot event pulses: expand + fade, then self-remove

@@ -151,7 +151,8 @@ export function App() {
   const [localPlaying, setLocalPlaying] = useState(true); // the map is ALIVE on open (6R)
   const [inertial, setInertial] = useState<InertialStar[]>([]);
   const [inertialEpoch, setInertialEpoch] = useState(0); // sim time the inertial sky was last computed at
-  const [epochDelta, setEpochDelta] = useState(0);        // B5 comparator span (0 = off)
+  const [epochDelta, setEpochDelta] = useState(1e5);      // drift comparator span — ON by
+  // default: the ghost tracks are the star field's own trajectories (0 = off)
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candScanned, setCandScanned] = useState(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -179,6 +180,33 @@ export function App() {
   const setExposureRef = useRef<(v: number) => void>(() => {});
 
   useEffect(() => { loadSky().then(setSky).catch((e) => setError(String(e))); }, []);
+
+  // Open INTO a living sky (6R final acceptance): default the vantage to a multi-moon world
+  // from the emitted pool — moons crawling, countdown running, no setup screens. Falls back
+  // to the star vantage silently if the pool is missing.
+  useEffect(() => {
+    if (!sky) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const man = (await (await fetch("data/worlds/manifest.json")).json()) as { worlds?: { type: string; file: string }[] };
+        if (cancelled || !Array.isArray(man?.worlds)) return;
+        const meta = man.worlds.find((w) => w.type === "multi_moon") ?? man.worlds[0];
+        if (!meta) return;
+        const w = await (await fetch(`data/worlds/${meta.file}`)).json() as {
+          world_type: string; name: string;
+          host_star: { catalog_id: string; galactic_xyz_pc: [number, number, number] };
+        };
+        if (cancelled || !w?.host_star?.galactic_xyz_pc) return;
+        setWorldVantage((cur) => cur ?? {
+          pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id,
+          world: parseWorld(w), type: w.world_type, worldName: w.name,
+        });
+        window.setTimeout(() => beginArrivalRef.current(), 60);
+      } catch { /* no world pool: stay on the star vantage */ }
+    })();
+    return () => { cancelled = true; };
+  }, [sky]);
 
   const sessionInfo = useMemo(
     () => (!sky ? null : worldVantage ? buildSessionAt(sky, worldVantage.pos) : buildSession(sky, vantage)),
@@ -348,10 +376,15 @@ export function App() {
     setScanReq({ from: tYears, span: worldClock.orbitYears });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- arm once per world
   }, [worldVantage, worldClock]);
+  // Re-arm at most once per 2s of real time: without the gate, scrubbing the EPOCH far past
+  // the window re-armed (and re-ran the expensive scan) on every frame — the "epochs feel
+  // broken" freeze. The scan is fast-time furniture; deep scrubs just park it briefly.
+  const lastArmRef = useRef(0);
   useEffect(() => {
-    if (scan && scan.events.length > 0 && tYears > scan.from + scan.span) {
-      setScanReq({ from: tYears, span: scan.span });
-    }
+    if (!scan || scan.events.length === 0 || tYears <= scan.from + scan.span) return;
+    if (performance.now() - lastArmRef.current < 2000) return;
+    lastArmRef.current = performance.now();
+    setScanReq({ from: tYears, span: scan.span });
   }, [tYears, scan]);
 
   // The event REGISTERS: when sim time crosses an event moment, pulse the involved bodies.
@@ -402,17 +435,17 @@ export function App() {
   const starPoints: StarPoint[] = useMemo(
     () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag })), [inertial]);
 
-  // Epoch comparator (B5): ghost drift tracks of the fastest movers over the chosen span.
-  // Static dotted ink (periodYears huge => the renderer's crawl dots sit still along them).
-  const driftPaths = useMemo(() => {
-    if (!epochDelta || !sky || !sessionInfo) return [] as { pts: Vec3[]; color: number; periodYears: number }[];
+  // Epoch drift: ghost tracks of the fastest movers over the comparator span — the star
+  // field's trajectories. Rendered as ONE dotted layer (single draw call in the renderer).
+  const driftSegs = useMemo(() => {
+    if (!epochDelta || !sky || !sessionInfo) return [] as { a: Vec3; b: Vec3 }[];
     const obs = sessionInfo.observer;
     const movers = inertial.filter((s) => (pmById.get(s.id) ?? 0) > 15)
       .sort((a, b) => (pmById.get(b.id) ?? 0) - (pmById.get(a.id) ?? 0)).slice(0, 600);
-    const out: { pts: Vec3[]; color: number; periodYears: number }[] = [];
+    const out: { a: Vec3; b: Vec3 }[] = [];
     for (const s of movers) {
       const d1 = directionAt(sky, obs, s.id, inertialEpoch + epochDelta);
-      if (d1) out.push({ pts: [s.direction_icrs, d1], color: 0x9aa4ad, periodYears: 1e12 });
+      if (d1) out.push({ a: s.direction_icrs, b: d1 });
     }
     return out;
   }, [epochDelta, sky, sessionInfo, inertial, inertialEpoch, pmById]);
@@ -615,17 +648,18 @@ export function App() {
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
         exposureRef={(fn) => (setExposureRef.current = fn)} onLook={setViewDir}
         pulseRef={(fn) => (pulseFnRef.current = fn)} arrivalRef={(fn) => (beginArrivalRef.current = fn)}
-        links={linkArcs}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={[...trailPaths, ...driftPaths]} plotTime={tYears}
+        links={linkArcs} drift={driftSegs}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={trailPaths} plotTime={tYears}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
 
-      {/* --- chrome furniture: brackets, tape, world header, mode bar --- */}
+      {/* --- chrome furniture: brackets, tape, world header, status strip, mode bar --- */}
       <span className="bk tl" /><span className="bk tr" /><span className="bk bl" /><span className="bk br" />
       {viewHz && <CompassTape azDeg={viewHz.azDeg} altDeg={viewHz.altDeg} />}
       <WorldHeader worldClock={worldClock} hostLabel={worldVantage?.label ?? null} vantage={vantage} />
       <NextEventChip scan={scan} t={tYears} observing={!!worldVantage} />
+      <StatusStrip azDeg={viewHz?.azDeg ?? null} mode={mode} projection={projection} fov={fov} readout={localReadout} />
       <div className="modebar">
         {MODES.map((m, i) => (
           <button key={m} className={mode === m ? "active" : ""} onClick={() => goMode(m)}>
@@ -841,6 +875,22 @@ function NextEventChip(props: { scan: Scan | null; t: number; observing: boolean
     <div className="nextevent">
       <div className="sup">Next event</div>
       <div className="val">{next.label} · <b>T−{fmtT(next.t - t)}</b></div>
+    </div>
+  );
+}
+
+/** Always-on instrument status strip (bottom centre): the avionics readout line —
+ *  superscript category labels over ticking values (HEAD / MODE / LOC / FOV / SYS). */
+function StatusStrip(props: { azDeg: number | null; mode: Mode; projection: Projection; fov: number; readout: string }) {
+  const az = useTicked(props.azDeg, 250), fov = useTicked(props.fov, 250), loc = useTicked(props.readout, 500);
+  const proj = props.projection === "gnomonic" ? "FLT" : props.projection === "fisheye" ? "FSH" : "DOM";
+  return (
+    <div className="statusbar">
+      {az != null && <span className="avcell"><span className="sup">Head</span><span className="val">{az.toFixed(0).padStart(3, "0")}°T</span></span>}
+      <span className="avcell"><span className="sup">Mode</span><span className="val">{props.mode.toUpperCase()} · {proj}</span></span>
+      <span className="avcell"><span className="sup">Loc T</span><span className="val">{loc}</span></span>
+      <span className="avcell"><span className="sup">Fov</span><span className="val">{fov.toFixed(0)}°</span></span>
+      <span className="avcell"><span className="sup">Sys</span><span className="val">POS/INS ▪</span></span>
     </div>
   );
 }

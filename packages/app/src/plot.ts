@@ -12,9 +12,10 @@
 
 export const PLOT_CLASSING = {
   /** upper apparent-magnitude bounds for classes 4,3,2,1 (fainter than last = class 0) */
-  thresholds: [2.0, 3.2, 4.3, 5.3] as const,
-  /** how many of the brightest stars become concentric-ring glyphs */
-  ringedCount: 20,
+  thresholds: [1.0, 2.6, 4.0, 5.3] as const,
+  /** how many of the brightest stars become concentric-ring glyphs — SPARSE: the ringed
+   *  nodes are punctuation, not texture (the reference has a handful per frame) */
+  ringedCount: 10,
 };
 
 /** Discrete ink class for an apparent magnitude. `depthStops` shifts the effective plate
