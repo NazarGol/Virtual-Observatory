@@ -9,12 +9,13 @@
   "scripts": {
     "test": "npm test -w @vobs/engine",
     "build": "npm run build -w @vobs/engine",
-    "typecheck": "npm run typecheck -w @vobs/engine",
+    "typecheck": "npm run typecheck -w @vobs/engine && npm run typecheck -w @vobs/app",
     "guard:no-three": "sh scripts/guard_no_three.sh",
     "emit-sky": "node --import tsx tools/emit_sky.ts",
     "emit-horizon": "node --import tsx tools/emit_horizontal.ts",
     "emit-worlds": "node --import tsx tools/emit_worlds.ts",
     "emit-dossier": "node --import tsx tools/emit_dossier.ts",
+    "emit-app-data": "node --import tsx tools/emit_app_data.ts",
     "scrub-bench": "node --import tsx tools/scrub_bench.ts"
   }
 }

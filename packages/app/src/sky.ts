@@ -31,10 +31,35 @@ export interface LoadedSky {
   geoObserver: GeoObserver;
 }
 
+/** Thrown when a required data/*.json file is missing or malformed, naming exactly which
+ *  file and how to fix it -- the app never shows a raw fetch/JSON error for this (Gate B
+ *  data-pipeline fix: see tools/emit_app_data.ts). */
+export class AppDataError extends Error {
+  constructor(public readonly file: string, cause: string) {
+    super(`missing or invalid ${file} (${cause})`);
+    this.name = "AppDataError";
+  }
+}
+
+async function fetchJson(path: string): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch(path);
+  } catch {
+    throw new AppDataError(path, "network error fetching it");
+  }
+  if (!res.ok) throw new AppDataError(path, `HTTP ${res.status}`);
+  try {
+    return await res.json();
+  } catch {
+    throw new AppDataError(path, "not valid JSON");
+  }
+}
+
 export async function loadSky(): Promise<LoadedSky> {
   const [catalog, worldRaw] = await Promise.all([
-    fetch("data/catalog.json").then((r) => r.json() as Promise<Catalog>),
-    fetch("data/world.json").then((r) => r.json()),
+    fetchJson("data/catalog.json") as Promise<Catalog>,
+    fetchJson("data/world.json"),
   ]);
   const world = parseWorld(worldRaw);
   return {

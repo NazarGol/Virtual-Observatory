@@ -52,7 +52,15 @@ export function Gallery(props: { onBack: () => void; onObserve: (world: LoadedWo
     slot.pinned ? slot : { ...slot, index: (slot.index + 1) % (byType!.get(slot.type)!.length || 1) }));
   const togglePin = (i: number) => setSlots((s) => s.map((slot, j) => (j === i ? { ...slot, pinned: !slot.pinned } : slot)));
 
-  if (err) return <div className="gallery"><header className="gbar"><button onClick={props.onBack}>← Instrument</button></header><div style={{ padding: 24, color: "#ff9" }}>No world pool. Run <code>npm run emit-worlds</code>, then restart. ({err})</div></div>;
+  if (err) return <div className="gallery"><header className="gbar"><button onClick={props.onBack}>← Instrument</button></header>
+    <div style={{ padding: 24, color: "#ff9", fontFamily: "monospace", lineHeight: 1.6 }}>
+      <p>No world pool (<code>data/worlds/manifest.json</code> didn't load).</p>
+      <p>Run <code>npm run emit-app-data</code> from the repo root, then reload. (That copies the
+        already-committed <code>worlds/generated/</code> pool into place; only run
+        <code> npm run emit-worlds</code> first if you actually want to regenerate the worlds
+        themselves, which needs the real catalog baked.)</p>
+      <p style={{ opacity: 0.7 }}>{err}</p>
+    </div></div>;
   if (!byType) return <div className="gallery"><header className="gbar"><button onClick={props.onBack}>← Instrument</button><b>World gallery</b></header><div style={{ padding: 24 }}>loading worlds…</div></div>;
 
   return (

@@ -27,10 +27,21 @@ packages/engine/          pure TypeScript engine (NO rendering imports, enforced
   src/bodies.ts           Keplerian host star / moons / siblings (Phase 1)
   src/session.ts          SkySession: sim/render decoupling (Phase 1)
 catalog/                  static catalog artifacts (test_stars.json committed; bake output gitignored)
-worlds/                   hand-authored world.json (the Sol world for §3)
+worlds/                   hand-authored world.json (Sol, §3) + generated/ (world gallery pool)
+packages/app/             the instrument: React + Vite + Three, consumes @vobs/engine
+  public/data/            GITIGNORED, GENERATED — see tools/emit_app_data.ts below; the app
+                           fetches catalog.json / world.json / worlds/manifest.json from here
 renderer/                 throwaway renderers (0d/Phase 1) — eyeballing only, not a deliverable
   main.js                 inertial dot sphere; horizon.js — alt/az dome + time scrubbing
 tools/                    emit_sky.ts, emit_horizontal.ts, scrub_bench.ts (engine -> JSON / demos)
+  emit_worlds.ts          builds worlds/generated/ (the world-gallery pool) from a real catalog
+  emit_app_data.ts        builds packages/app/public/data/ (catalog+world+world-pool) for the
+                           instrument to fetch at runtime -- runs automatically via predev/
+                           prebuild in packages/app, but `npm run emit-app-data` also works
+                           standalone; falls back to the small committed test catalog if the
+                           real bake isn't present, with a console warning explaining why
+  emit_dossier.ts         computes a world's full observational truth (calendar, moons,
+                           eclipses, stars, deep time) as a markdown doc -> dossiers/*.md
 docs/adr/                 architecture decision records
 ```
 
@@ -69,6 +80,33 @@ node --import tsx tools/emit_sky.ts \
 > - Relocating to Alpha Cen A, its binary companion Alpha Cen B (HIP71681) correctly blazes
 >   at V≈−19 right next to the observer — a quick sanity check that the magnitude recompute
 >   is doing real inverse-square work.
+
+## Run the instrument app
+
+```bash
+npm install
+npm run dev -w @vobs/app     # predev runs tools/emit_app_data.ts automatically -- no setup needed
+```
+
+That's the whole fresh-clone path: `predev`/`prebuild` always call `tools/emit_app_data.ts`
+first, which builds `packages/app/public/data/` (catalog, default world, world-gallery pool)
+from what's committed or already baked. On a bare clone (no real catalog baked yet) it falls
+back to the small committed `catalog/test_stars.json` and prints a warning -- the app still
+runs, just with a near-empty sky. For the real ~10.5k-star sky:
+
+```bash
+python bake/bake_catalog.py         # -> catalog/local_volume_300pc.json (gitignored, real bake)
+npm run emit-worlds                 # -> worlds/generated/ (the world-gallery pool; needs the real catalog)
+npm run emit-app-data               # refresh packages/app/public/data/ from the above
+```
+
+If the app ever shows "App data didn't load" (or the World Gallery shows "No world pool"),
+that's exactly this step needing to be (re-)run -- the on-screen message names the missing
+file and the command to fix it.
+
+`npm run typecheck` covers both `@vobs/engine` and `@vobs/app` (also enforced separately in
+CI); `npm run emit-dossier -- --world <path> --site "lat,lon:Label"` computes a world's full
+observational truth as a markdown doc, independent of the running app.
 
 ## Validation
 

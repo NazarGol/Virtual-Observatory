@@ -13,7 +13,7 @@ import {
 } from "@vobs/engine";
 import {
   loadSky, buildSession, buildSessionAt, directionAt, horizontalOf, riseSetOf, horizonBasisFor,
-  SECONDS_PER_JULIAN_YEAR, type LoadedSky, type Vantage,
+  SECONDS_PER_JULIAN_YEAR, AppDataError, type LoadedSky, type Vantage,
 } from "./sky";
 
 type Projection = "gnomonic" | "fisheye" | "dome";
@@ -87,7 +87,7 @@ function InlineForm(props: { placeholder: string; initial?: string; multiline?: 
 
 export function App() {
   const [sky, setSky] = useState<LoadedSky | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
   const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World } | null>(null);
   const [epochYears, setEpochYears] = useState(0);   // deep time (proper motion)
@@ -116,7 +116,7 @@ export function App() {
   const setFovRef = useRef<(f: number) => void>(() => {});
   const setExposureRef = useRef<(v: number) => void>(() => {});
 
-  useEffect(() => { loadSky().then(setSky).catch((e) => setError(String(e))); }, []);
+  useEffect(() => { loadSky().then(setSky).catch(setError); }, []);
 
   const sessionInfo = useMemo(
     () => (!sky ? null : worldVantage ? buildSessionAt(sky, worldVantage.pos) : buildSession(sky, vantage)),
@@ -282,7 +282,7 @@ export function App() {
 
   if (view === "gallery") return <Gallery onBack={() => setView("instrument")}
     onObserve={(w) => { setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w) }); setView("instrument"); }} />;
-  if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
+  if (error) return <DataError error={error} />;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
 
   const focusId = hoverId ?? selection[0] ?? draft[draft.length - 1] ?? null;
@@ -354,6 +354,27 @@ export function App() {
           playing={localPlaying} onPlay={() => setLocalPlaying((p) => !p)}
           readout={localReadout} />
       </div>
+    </div>
+  );
+}
+
+/** Data-pipeline failure (Phase 8 fix): never a blank screen or a raw fetch/JSON error --
+ *  name the missing file and the exact command that fixes it. */
+function DataError(props: { error: unknown }) {
+  const isAppData = props.error instanceof AppDataError;
+  return (
+    <div style={{ padding: 24, maxWidth: 640, fontFamily: "monospace", lineHeight: 1.6 }}>
+      <h2 style={{ color: "#ff9", margin: "0 0 8px" }}>App data didn't load</h2>
+      {isAppData
+        ? <>
+            <p>Missing or invalid: <code>packages/app/public/{(props.error as AppDataError).file}</code></p>
+            <p>This directory is generated, not committed. Run, from the repo root:</p>
+            <pre style={{ background: "#111", padding: "8px 12px", borderRadius: 4 }}>npm run emit-app-data</pre>
+            <p>then reload. (`npm run dev` / `npm run build` also run this automatically as a
+              pre-step — if you're still seeing this right after one of those, check the
+              terminal output for a warning about a missing catalog or world pool.)</p>
+          </>
+        : <p>{String(props.error)}</p>}
     </div>
   );
 }

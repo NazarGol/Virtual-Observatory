@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Virtual Observatory instrument (React + Vite + Three), consuming @vobs/engine.",
   "scripts": {
-    "predev": "node scripts/prepare-data.mjs",
+    "predev": "node --import tsx ../../tools/emit_app_data.ts",
     "dev": "vite",
-    "prebuild": "node scripts/prepare-data.mjs",
+    "prebuild": "node --import tsx ../../tools/emit_app_data.ts",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
