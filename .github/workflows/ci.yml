@@ -40,6 +40,8 @@ jobs:
         run: npm ci
       - name: Typecheck engine
         run: npm run typecheck
+      - name: Typecheck app
+        run: npm run typecheck -w @vobs/app
       - name: Engine rendering-free guard (section 1.1)
         run: npm run guard:no-three
       - name: Validation suite (engine, all phases)

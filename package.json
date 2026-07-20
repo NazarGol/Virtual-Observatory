@@ -14,6 +14,7 @@
     "emit-sky": "node --import tsx tools/emit_sky.ts",
     "emit-horizon": "node --import tsx tools/emit_horizontal.ts",
     "emit-worlds": "node --import tsx tools/emit_worlds.ts",
+    "emit-dossier": "node --import tsx tools/emit_dossier.ts",
     "scrub-bench": "node --import tsx tools/scrub_bench.ts"
   }
 }

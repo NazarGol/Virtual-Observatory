@@ -17,7 +17,8 @@
     "rotation_period_s": 86164,
     "axial_tilt_deg": 23.4,
     "north_pole_inertial": { "ra_deg": 0, "dec_deg": 90 },
-    "orbit": { "a_au": 1.0, "e": 0.0, "i_deg": 0, "Omega_deg": 0, "omega_deg": 0, "M0_deg": 0, "epoch_jd": 2451545.0 }
+    "orbit_note": "i_deg/Omega_deg place the orbital-plane normal at the real ecliptic pole (RA 270 deg, Dec +66.5607 deg -- Earth's true ecliptic-equator obliquity), so the north_pole_inertial above (Earth's real celestial pole, correctly at dec 90) sits 23.4 deg away from it -- axial_tilt_deg is then the ACTUAL angle Stage 2 sees, not a decorative field. (i_deg=0 previously put the orbital normal AT dec 90 too, coincident with the pole: zero effective tilt, no seasons -- found while building the Phase 8 dossier's solstice/day-length scan, which needs the real geometry.)",
+    "orbit": { "a_au": 1.0, "e": 0.0, "i_deg": 23.44, "Omega_deg": 0, "omega_deg": 0, "M0_deg": 0, "epoch_jd": 2451545.0 }
   },
   "moons": [
     {
@@ -29,5 +30,5 @@
   ],
   "observer": { "lat_deg": 0.0, "lon_deg": 0.0, "elevation_m": 0 },
   "epoch_jd": 2451545.0,
-  "catalog_ref": "catalog/test_stars.json"
+  "catalog_ref": "catalog/local_volume_300pc.json"
 }
