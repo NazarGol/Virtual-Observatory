@@ -3,7 +3,7 @@ import {
   resolveMeasurement, serializeMeasurements, parseMeasurements,
   serializeAnnotations, parseAnnotations, resolveFigure, resolveLabel,
   serializeNotebook, parseNotebook, emptyNotebook,
-  PROPAGATION_MODELS, findMinSeparation,
+  PROPAGATION_MODELS,
   parseWorld, planetOrientation, worldObserver, worldBodies,
   type World, type PlanetOrientation, type GeoObserver,
   type MeasurementDef, type MeasurementKind, type MeasurementResult,
@@ -19,23 +19,10 @@ import {
 type Projection = "gnomonic" | "fisheye" | "dome";
 import { SkyView } from "./components/SkyView";
 import { Gallery } from "./components/Gallery";
-import { milkyWayGeometry, milkyWayStipple } from "./milkyway";
-import { comovingCandidates, anomalyCandidates, alignmentCandidates, candidatesFromStar, type Candidate } from "./analysis";
-import { shortcutFor, SHORTCUTS, MODES, type KbAction, type Mode } from "./keyboard";
-import { setSoundEnabled, uiTick, uiClack, chime } from "./sound";
+import { milkyWayGeometry, milkyWayBand } from "./milkyway";
 import { geodesicArc, type StarPoint } from "./three/StarField";
 
-const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1", survey: "vobs.survey.v1" };
-
-// Survey log (Gate B, B6): the human records candidate objects; unnamed ones get a running
-// VOEC-### designation. Compute proposes (the sky); the human disposes (records).
-interface SurveyEntry {
-  id: string; designation: string; objectId: string;
-  raDeg: number; decDeg: number; mag: number; sensor: string; // legacy field ("plot" for new records)
-  atYears: number; note: string; createdAtYears: number;
-}
-const serializeSurvey = (e: SurveyEntry[]) => JSON.stringify(e);
-const parseSurvey = (s: string): SurveyEntry[] => { const a = JSON.parse(s); return Array.isArray(a) ? (a as SurveyEntry[]) : []; };
+const KEY = { meas: "vobs.measurements.v1", annot: "vobs.annotations.v1", note: "vobs.notebook.v1" };
 const R2D = 180 / Math.PI;
 const uid = () => crypto.randomUUID();
 const raOf = (d: Vec3) => ((Math.atan2(d[1], d[0]) * R2D) + 360) % 360;
@@ -49,9 +36,10 @@ const fmtT = (y: number) => {
 };
 const hoursFromNow = (e: number, now: number) => ((e - now) * SPY) / 3600;
 
-// Two timelines over ONE underlying coordinate (Gate B-FIX 2). EPOCH = deep time (stellar
-// proper motion / precession, kyr-Myr); LOCAL = world-native fast time (rotation, sun, moons,
-// sub-day to a few orbits). Sweeping local never recomputes the star field (Stage-1).
+// Two clocks over ONE underlying time coordinate (tYears = epoch + local). EPOCH is deep
+// time -- it drives Stage-1 stellar proper motion (kyr-Myr scrubs, its own play/rate).
+// LOCAL is world-native fast time -- rotation, the host star's sky position, moons (sub-day
+// to a few orbits, its own play/rate). Sweeping local never recomputes the star field.
 const EPOCH_SCALES: { label: string; years: number }[] = [
   { label: "±100 yr", years: 100 }, { label: "±10 kyr", years: 1e4 }, { label: "±100 kyr", years: 1e5 },
   { label: "±1 Myr", years: 1e6 }, { label: "±10 Myr", years: 1e7 },
@@ -67,10 +55,6 @@ const LOCAL_RATES: { label: string; yps: number }[] = [
   { label: "1 hr/s", yps: 3600 / SPY }, { label: "1 day/s", yps: 86400 / SPY }, { label: "1 mo/s", yps: (30 * 86400) / SPY }, { label: "1 yr/s", yps: 1 },
 ];
 
-type WorldClock = { orbitYears: number; rotDays: number; locked: boolean; type: string; name: string };
-type SkyEvent = { t: number; label: string; kind: "day" | "conj" | "eclipse"; names: string[]; recurYears?: number };
-type Scan = { from: number; span: number; events: SkyEvent[] };
-
 type Tool = "select" | "angular_distance" | "separation_position_angle" | "alignment" | "figure" | "label";
 const TOOL_LABEL: Record<Tool, string> = {
   select: "Select", angular_distance: "Distance", separation_position_angle: "Sep+PA",
@@ -78,42 +62,8 @@ const TOOL_LABEL: Record<Tool, string> = {
 };
 const MEASURE_TOOLS: Tool[] = ["angular_distance", "separation_position_angle", "alignment"];
 
-// Epoch comparator spans (B5): ghost drift tracks of the fastest movers over the span.
-const EPOCHS: { label: string; y: number }[] = [
-  { label: "off", y: 0 }, { label: "10 kyr", y: 1e4 }, { label: "100 kyr", y: 1e5 }, { label: "1 Myr", y: 1e6 },
-];
-
 function loadJSON<T>(key: string, parse: (s: string) => T, fallback: T): T {
   try { const s = localStorage.getItem(key); return s ? parse(s) : fallback; } catch { return fallback; }
-}
-
-/** Machine tick (Phase 6R motion rule: physics glides, the MACHINE ticks): sample a live
- *  value on a fixed cadence so chrome numerals update in discrete steps. */
-function useTicked<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  const latest = useRef(value);
-  latest.current = value;
-  useEffect(() => {
-    const id = window.setInterval(() => setV(latest.current), ms);
-    return () => window.clearInterval(id);
-  }, [ms]);
-  return v;
-}
-
-/** Collapsible rail section (minimal UI): a header line + body shown only when open.
- *  The title is its own element so it stays queryable and clicking it toggles the section. */
-function Section(props: { title: string; meta?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(props.defaultOpen ?? false);
-  return (
-    <div className={"sec" + (open ? " on" : "")}>
-      <div className="sechead" onClick={() => setOpen((o) => !o)}>
-        <span className="caret">{open ? "▾" : "▸"}</span>
-        <span className="t">{props.title}</span>
-        {props.meta != null && <span className="meta">{props.meta}</span>}
-      </div>
-      {open && <div className="secbody">{props.children}</div>}
-    </div>
-  );
 }
 
 /** Small in-app text editor used everywhere a native prompt used to be (prompts are
@@ -139,8 +89,8 @@ export function App() {
   const [sky, setSky] = useState<LoadedSky | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [vantage, setVantage] = useState<Vantage>("alpha-cen");
-  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World; type: string; worldName: string } | null>(null);
-  const [epochYears, setEpochYears] = useState(0);   // deep time (proper motion / precession)
+  const [worldVantage, setWorldVantage] = useState<{ pos: Vec3; label: string; world: World } | null>(null);
+  const [epochYears, setEpochYears] = useState(0);   // deep time (proper motion)
   const [localYears, setLocalYears] = useState(0);   // world-native fast time (rotation, sun, moons)
   const tYears = epochYears + localYears;            // the single underlying coordinate
   const [epochScale, setEpochScale] = useState(EPOCH_SCALES[0]!.years);
@@ -148,13 +98,8 @@ export function App() {
   const [epochPlaying, setEpochPlaying] = useState(false);
   const [localScale, setLocalScale] = useState(LOCAL_SCALES[1]!.years); // ±1 day
   const [localRate, setLocalRate] = useState(LOCAL_RATES[1]!.yps);      // 1 day/s
-  const [localPlaying, setLocalPlaying] = useState(true); // the map is ALIVE on open (6R)
+  const [localPlaying, setLocalPlaying] = useState(true); // a living sky by default
   const [inertial, setInertial] = useState<InertialStar[]>([]);
-  const [inertialEpoch, setInertialEpoch] = useState(0); // sim time the inertial sky was last computed at
-  const [epochDelta, setEpochDelta] = useState(1e5);      // drift comparator span — ON by
-  // default: the ghost tracks are the star field's own trajectories (0 = off)
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [candScanned, setCandScanned] = useState(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [draft, setDraft] = useState<string[]>([]);
@@ -163,50 +108,15 @@ export function App() {
   const [fov, setFov] = useState(60);
   const [exposure, setExposure] = useState(0);
   const [showMilkyWay, setShowMilkyWay] = useState(true);
-  const [bodyTrails, setBodyTrails] = useState(true); // crawling orbit dots on by default (6R)
-  const [scanReq, setScanReq] = useState<{ from: number; span: number } | null>(null);
   const [projection, setProjection] = useState<Projection>("gnomonic");
   const [view, setView] = useState<"instrument" | "gallery">("instrument");
-  const [mode, setMode] = useState<Mode>("observe");        // the modal instrument (6R)
-  const [viewDir, setViewDir] = useState<Vec3>([1, 0, 0]);  // view centre (compass tape)
-  const [ctlOpen, setCtlOpen] = useState(false);            // OBSERVE opens near-empty
-  const [showHelp, setShowHelp] = useState(false);
-  const [sound, setSound] = useState(false);
   const [measurements, setMeasurements] = useState<MeasurementDef[]>(() => loadJSON(KEY.meas, parseMeasurements, []));
   const [annotations, setAnnotations] = useState<Annotation[]>(() => loadJSON(KEY.annot, parseAnnotations, []));
   const [notebook, setNotebook] = useState<Notebook>(() => loadJSON(KEY.note, parseNotebook, emptyNotebook()));
-  const [survey, setSurvey] = useState<SurveyEntry[]>(() => loadJSON(KEY.survey, parseSurvey, []));
   const setFovRef = useRef<(f: number) => void>(() => {});
   const setExposureRef = useRef<(v: number) => void>(() => {});
 
   useEffect(() => { loadSky().then(setSky).catch((e) => setError(String(e))); }, []);
-
-  // Open INTO a living sky (6R final acceptance): default the vantage to a multi-moon world
-  // from the emitted pool — moons crawling, countdown running, no setup screens. Falls back
-  // to the star vantage silently if the pool is missing.
-  useEffect(() => {
-    if (!sky) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const man = (await (await fetch("data/worlds/manifest.json")).json()) as { worlds?: { type: string; file: string }[] };
-        if (cancelled || !Array.isArray(man?.worlds)) return;
-        const meta = man.worlds.find((w) => w.type === "multi_moon") ?? man.worlds[0];
-        if (!meta) return;
-        const w = await (await fetch(`data/worlds/${meta.file}`)).json() as {
-          world_type: string; name: string;
-          host_star: { catalog_id: string; galactic_xyz_pc: [number, number, number] };
-        };
-        if (cancelled || !w?.host_star?.galactic_xyz_pc) return;
-        setWorldVantage((cur) => cur ?? {
-          pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id,
-          world: parseWorld(w), type: w.world_type, worldName: w.name,
-        });
-        window.setTimeout(() => beginArrivalRef.current(), 60);
-      } catch { /* no world pool: stay on the star vantage */ }
-    })();
-    return () => { cancelled = true; };
-  }, [sky]);
 
   const sessionInfo = useMemo(
     () => (!sky ? null : worldVantage ? buildSessionAt(sky, worldVantage.pos) : buildSession(sky, vantage)),
@@ -224,10 +134,21 @@ export function App() {
       : { east: [0, 1, 0] as Vec3, north: [0, 0, 1] as Vec3, up: [1, 0, 0] as Vec3 }),
     [apparatus, tYears],
   );
+  // World-native time (Kepler III from a and host mass): the observed world's own day/year,
+  // and whether it's spin-orbit locked (host star never sets -- no solar day).
+  const worldClock = useMemo(() => {
+    if (!worldVantage) return null;
+    const w = worldVantage.world;
+    const a = w.planet.orbit.a_au, M = Math.max(w.host_star.mass_msun, 1e-6);
+    const orbitYears = Math.sqrt((a * a * a) / M);
+    const orbitSec = orbitYears * SPY, rotSec = w.planet.rotation_period_s;
+    const locked = Math.abs(rotSec - orbitSec) / orbitSec < 1e-3;
+    return { orbitYears, rotDays: rotSec / 86400, locked };
+  }, [worldVantage]);
   // All bodies of the observed world (host star, moons, siblings), updated every frame.
   const allBodies = useMemo(() => (worldVantage ? worldBodies(worldVantage.world, tYears) : []), [worldVantage, tYears]);
   const bodyMarkers = useMemo(
-    () => allBodies.map((b) => ({ dir: b.direction_icrs as Vec3, name: b.name, kind: b.kind, diamDeg: b.angularDiameterDeg, illum: b.illuminatedFraction })),
+    () => allBodies.map((b) => ({ dir: b.direction_icrs as Vec3, name: b.name, kind: b.kind, diamDeg: b.angularDiameterDeg })),
     [allBodies],
   );
   // host-star glare: the sun (host star) washes out nearby stars when it is above the horizon.
@@ -237,16 +158,13 @@ export function App() {
   }, [allBodies]);
   const GLARE_DEG = 14;
   // Milky Way band point cloud, oriented by the vantage (recomputed on relocation).
-  const mwPoints = useMemo(() => (showMilkyWay ? milkyWayStipple(mw) : []), [mw, showMilkyWay]);
+  const mwPoints = useMemo(() => (showMilkyWay ? milkyWayBand(mw) : []), [mw, showMilkyWay]);
   useEffect(() => {
     if (!sessionInfo) return;
-    // Freeze Stage-1 (proper motion) when scrubbing/playing at sub-year scales -- only
-    // recompute the star field when time has moved far enough to matter. The apparatus +
-    // bodies (memos below) update every frame regardless.
-    // Stage-1 (proper motion) is driven by the EPOCH clock only: sweeping the local clock
-    // moves the sun/moons/rotation but never recomputes the star field.
+    // Stage-1 (proper motion) is keyed to the EPOCH clock only -- sweeping local moves the
+    // sun/moons/rotation but never recomputes the star field (sim/render decoupling).
     const recomputed = sessionInfo.session.ensureInertial(epochYears);
-    if (recomputed) { setInertial([...sessionInfo.session.inertial]); setInertialEpoch(epochYears); }
+    if (recomputed) setInertial([...sessionInfo.session.inertial]);
   }, [sessionInfo, epochYears]);
 
   // two independent play loops (rAF-driven): epoch (deep) and local (fast).
@@ -264,212 +182,17 @@ export function App() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [localPlaying, localRate]);
-
-  // Jump to an absolute time (markers/notes/events): put it on the epoch axis, local at 0.
+  // Jump to an absolute time (markers/notes): put it on the epoch axis, local at 0.
   const goTo = (t: number) => { setEpochYears(t); setLocalYears(0); };
-
-  // Keyboard control (Gate C). The dispatcher is reassigned each render (fresh closure over
-  // state); the listener is mounted once and reads it through a ref. Ignored while typing.
-  const dispatchRef = useRef<(a: KbAction) => void>(() => {});
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const a = shortcutFor(e.key);
-      if (a) { e.preventDefault(); dispatchRef.current(a); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   useEffect(() => { localStorage.setItem(KEY.meas, serializeMeasurements(measurements)); }, [measurements]);
   useEffect(() => { localStorage.setItem(KEY.annot, serializeAnnotations(annotations)); }, [annotations]);
   useEffect(() => { localStorage.setItem(KEY.note, serializeNotebook(notebook)); }, [notebook]);
-  useEffect(() => { localStorage.setItem(KEY.survey, serializeSurvey(survey)); }, [survey]);
-
-  // World-native time (Gate B, B1): the observed world's own rotation ("day") and orbit
-  // ("year") from Kepler III, and whether it is spin-orbit locked (host star never sets).
-  const worldClock = useMemo(() => {
-    if (!worldVantage) return null;
-    const w = worldVantage.world;
-    const a = w.planet.orbit.a_au, M = Math.max(w.host_star.mass_msun, 1e-6);
-    const orbitYears = Math.sqrt((a * a * a) / M);       // P[yr] = sqrt(a[AU]^3 / M[Msun])
-    const orbitSec = orbitYears * SPY, rotSec = w.planet.rotation_period_s;
-    const locked = Math.abs(rotSec - orbitSec) / orbitSec < 1e-3;
-    return { orbitYears, rotDays: rotSec / 86400, locked, type: worldVantage.type, name: worldVantage.worldName };
-  }, [worldVantage]);
-
-  // Orbital tracks (Phase 6R): each body's on-sky path over ONE of its own periods, sampled
-  // evenly in time. The renderer draws them as dots CRAWLING at the body's true angular rate
-  // (fast moon = fast crawl). Ink plates: host path GOLD, moons BLUSH, siblings dim gold.
-  const trailPaths = useMemo(() => {
-    if (!worldVantage || !bodyTrails) return [] as { pts: Vec3[]; color: number; periodYears: number }[];
-    const world = worldVantage.world;
-    const orbitYears = worldClock ? worldClock.orbitYears : 1;
-    const Mp = Math.max(world.planet.mass_mearth * 3.003e-6, 1e-12); // planet mass in Msun
-    const colorOf = (k: string) => (k === "host_star" ? 0xf0dc84 : k === "moon" ? 0xf0c8a8 : 0x8a7d4a);
-    const periodOf = (name: string, kind: string): number => {
-      if (kind === "moon") { const m = world.moons.find((mo) => mo.name === name); if (m) return Math.sqrt(m.orbit.a_au ** 3 / Mp); }
-      return orbitYears; // host reflex + siblings ~ the planet's orbital period
-    };
-    const N = 180;
-    const out: { pts: Vec3[]; color: number; periodYears: number }[] = [];
-    for (const id of worldBodies(world, 0).map((b) => ({ name: b.name, kind: b.kind }))) {
-      const P = periodOf(id.name, id.kind), pts: Vec3[] = [];
-      for (let i = 0; i <= N; i++) {
-        const b = worldBodies(world, (i / N) * P).find((x) => x.name === id.name);
-        if (b) pts.push(b.direction_icrs as Vec3);
-      }
-      out.push({ pts, color: colorOf(id.kind), periodYears: P });
-    }
-    return out;
-  }, [worldVantage, bodyTrails, worldClock]);
-
-  // Event scanner (B4): on demand, scan a window for the host's rise/set/transit (day/night)
-  // and the closest approaches between bodies (conjunctions / occultation-eclipse candidates).
-  const scan = useMemo<Scan | null>(() => {
-    if (!scanReq || !worldVantage || !apparatus) return null;
-    const { from, span } = scanReq, world = worldVantage.world, o = apparatus.o, obs = apparatus.obs;
-    const at = (t: number) => worldBodies(world, t);
-    const bodiesNow = at(from), events: SkyEvent[] = [];
-    const host = bodiesNow.find((b) => b.kind === "host_star");
-    if (host) {
-      const rst = riseSetOf(o, obs, host.direction_icrs as Vec3, from);
-      if (rst.circumpolar) events.push({ t: from, label: `${host.name} never sets — circumpolar`, kind: "day", names: [host.name] });
-      else if (rst.neverRises) events.push({ t: from, label: `${host.name} never rises — permanent night`, kind: "day", names: [host.name] });
-      else {
-        if (rst.riseYears != null) events.push({ t: rst.riseYears, label: `${host.name} rises — dawn`, kind: "day", names: [host.name] });
-        if (rst.transitYears != null) events.push({ t: rst.transitYears, label: `${host.name} transits ${rst.transitAltitudeDeg.toFixed(0)}° — local noon`, kind: "day", names: [host.name] });
-        if (rst.setYears != null) events.push({ t: rst.setYears, label: `${host.name} sets — dusk`, kind: "day", names: [host.name] });
-      }
-    }
-    // synodic recurrence of a pair: 1/|1/P1 - 1/P2| (the "great clock" a calendar culture reads)
-    const orbitYears = Math.sqrt(world.planet.orbit.a_au ** 3 / Math.max(world.host_star.mass_msun, 1e-6));
-    const Mp = Math.max(world.planet.mass_mearth * 3.003e-6, 1e-12);
-    const periodOf = (name: string): number => {
-      const m = world.moons.find((mo) => mo.name === name);
-      return m ? Math.sqrt(m.orbit.a_au ** 3 / Mp) : orbitYears;
-    };
-    const names = bodiesNow.map((b) => b.name);
-    const dirOf = (name: string) => (t: number) => { const b = at(t).find((x) => x.name === name); return b ? (b.direction_icrs as Vec3) : null; };
-    const radAt = (name: string, t: number) => { const b = at(t).find((x) => x.name === name); return b ? b.angularDiameterDeg / 2 : 0; };
-    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
-      const c = findMinSeparation(dirOf(names[i]!), dirOf(names[j]!), from, span);
-      if (!c) continue;
-      const P1 = periodOf(names[i]!), P2 = periodOf(names[j]!);
-      const dn = Math.abs(1 / P1 - 1 / P2);
-      const recurYears = dn > 1e-9 ? 1 / dn : undefined;
-      const pair = [names[i]!, names[j]!];
-      const rSum = radAt(names[i]!, c.timeYears) + radAt(names[j]!, c.timeYears);
-      if (c.separationDeg < rSum) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} — occultation / eclipse (${c.separationDeg.toFixed(3)}°)`, kind: "eclipse", names: pair, recurYears });
-      else if (c.separationDeg < 3) events.push({ t: c.timeYears, label: `${names[i]} × ${names[j]} conjunction — ${c.separationDeg.toFixed(2)}°`, kind: "conj", names: pair, recurYears });
-    }
-    events.sort((a, b) => a.t - b.t);
-    return { from, span, events };
-  }, [scanReq, worldVantage, apparatus]);
-
-  // Auto-arm the scanner on arrival (one local year) and re-arm when the window is exhausted,
-  // so OBSERVE's next-event countdown is always live without user action.
-  useEffect(() => {
-    if (!worldVantage || !worldClock) { setScanReq(null); return; }
-    setScanReq({ from: tYears, span: worldClock.orbitYears });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm once per world
-  }, [worldVantage, worldClock]);
-  // Re-arm at most once per 2s of real time: without the gate, scrubbing the EPOCH far past
-  // the window re-armed (and re-ran the expensive scan) on every frame — the "epochs feel
-  // broken" freeze. The scan is fast-time furniture; deep scrubs just park it briefly.
-  const lastArmRef = useRef(0);
-  useEffect(() => {
-    if (!scan || scan.events.length === 0 || tYears <= scan.from + scan.span) return;
-    if (performance.now() - lastArmRef.current < 2000) return;
-    lastArmRef.current = performance.now();
-    setScanReq({ from: tYears, span: scan.span });
-  }, [tYears, scan]);
-
-  // The event REGISTERS: when sim time crosses an event moment, pulse the involved bodies.
-  const pulseFnRef = useRef<(dirs: Vec3[]) => void>(() => {});
-  const beginArrivalRef = useRef<() => void>(() => {});
-  const prevTRef = useRef(tYears);
-  useEffect(() => {
-    const prev = prevTRef.current;
-    prevTRef.current = tYears;
-    if (!scan || tYears <= prev || tYears - prev > 0.5) return; // only while playing forward
-    const crossed = scan.events.filter((e) => e.t > prev && e.t <= tYears && e.kind !== "day");
-    if (!crossed.length) return;
-    const dirs: Vec3[] = [];
-    for (const e of crossed) for (const n of e.names) {
-      const b = allBodies.find((x) => x.name === n);
-      if (b) dirs.push(b.direction_icrs as Vec3);
-    }
-    if (dirs.length) { pulseFnRef.current(dirs); chime(); }
-  }, [tYears, scan, allBodies]);
-
-  // EVENTS mode: dotted signal link-line between the bodies of the next upcoming pair event.
-  const linkArcs = useMemo(() => {
-    if (mode !== "events" || !scan) return [] as Vec3[][];
-    const next = scan.events.find((e) => e.t > tYears && e.names.length === 2);
-    if (!next) return [] as Vec3[][];
-    const a = allBodies.find((b) => b.name === next.names[0]);
-    const b = allBodies.find((x) => x.name === next.names[1]);
-    return a && b ? [geodesicArc(a.direction_icrs as Vec3, b.direction_icrs as Vec3, 32)] : [];
-  }, [mode, scan, tYears, allBodies]);
 
   const dirById = useMemo(() => new Map(inertial.map((s) => [s.id, s.direction_icrs])), [inertial]);
   const metaById = useMemo(() => new Map(inertial.map((s) => [s.id, s])), [inertial]);
-  // Proper motion per star at THIS vantage (mas/yr), from the drift over a fixed baseline.
-  // Rectilinear propagation makes the rate epoch-independent, so it's computed once per
-  // vantage (not per frame) -- the raw ingredient for the Proper-motion sensor.
-  const pmById = useMemo(() => {
-    const m = new Map<string, number>();
-    if (!sky || !sessionInfo) return m;
-    const obs = sessionInfo.observer, D = 250, K = (180 / Math.PI) * 3600 * 1000; // rad -> mas
-    for (const s of sky.catalog.stars) {
-      const d0 = directionAt(sky, obs, s.id, 0), d1 = directionAt(sky, obs, s.id, D);
-      if (!d0 || !d1) continue;
-      const dot = Math.max(-1, Math.min(1, d0[0] * d1[0] + d0[1] * d1[1] + d0[2] * d1[2]));
-      m.set(s.id, (Math.acos(dot) * K) / D);
-    }
-    return m;
-  }, [sky, sessionInfo]);
   const starPoints: StarPoint[] = useMemo(
-    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag })), [inertial]);
-
-  // Epoch drift: ghost tracks of the fastest movers over the comparator span — the star
-  // field's trajectories. Rendered as ONE dotted layer (single draw call in the renderer).
-  const driftSegs = useMemo(() => {
-    if (!epochDelta || !sky || !sessionInfo) return [] as { a: Vec3; b: Vec3 }[];
-    const obs = sessionInfo.observer;
-    const movers = inertial.filter((s) => (pmById.get(s.id) ?? 0) > 15)
-      .sort((a, b) => (pmById.get(b.id) ?? 0) - (pmById.get(a.id) ?? 0)).slice(0, 600);
-    const out: { a: Vec3; b: Vec3 }[] = [];
-    for (const s of movers) {
-      const d1 = directionAt(sky, obs, s.id, inertialEpoch + epochDelta);
-      if (d1) out.push({ a: s.direction_icrs, b: d1 });
-    }
-    return out;
-  }, [epochDelta, sky, sessionInfo, inertial, inertialEpoch, pmById]);
-
-  // B3: propose candidate regularities from what is currently in view. Human triggers it.
-  const applyCandidates = (cs: Candidate[]) => {
-    setCandidates(cs);
-    setCandScanned(true);
-    if (cs.length) chime();
-  };
-  const findCandidates = () => {
-    if (!sky) return;
-    const vis = new Set(inertial.map((s) => s.id));
-    applyCandidates([
-      ...comovingCandidates(sky.catalog.stars, vis),
-      ...alignmentCandidates(inertial),
-      ...anomalyCandidates(inertial, pmById),
-    ]);
-  };
-  // Star-centric proposal (user request): candidates that involve the selected star.
-  const findFromStar = (id: string) => {
-    if (!sky) return;
-    applyCandidates(candidatesFromStar(sky.catalog.stars, inertial, pmById, id));
-  };
+    () => inertial.map((s) => ({ dir: s.direction_icrs, mag: s.mag, bp_rp: s.bp_rp })), [inertial]);
 
   const resolver: ObjectResolver = useCallback(
     (id, t) => (sky && sessionInfo ? directionAt(sky, sessionInfo.observer, id, t) : null), [sky, sessionInfo]);
@@ -514,8 +237,7 @@ export function App() {
   const pick = useCallback((index: number | null) => {
     const id = index == null ? null : inertial[index]?.id ?? null;
     if (id == null) { if (tool === "select") setSelection([]); return; }
-    // selecting an object arms the TARGET instrument (the UI is modal, 6R)
-    if (tool === "select") { setSelection([id]); setMode((m) => (m === "observe" ? "target" : m)); return; }
+    if (tool === "select") { setSelection([id]); return; }
     if (tool === "label") { setPendingLabel(id); return; }
     if (tool === "figure") { setDraft((d) => [...d, id]); return; }
     if (tool === "alignment") { setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id])); return; }
@@ -559,86 +281,31 @@ export function App() {
   const nudgeFov = (factor: number) => setFovRef.current(Math.max(0.5, Math.min(120, fov * factor)));
 
   if (view === "gallery") return <Gallery onBack={() => setView("instrument")}
-    onObserve={(w) => {
-      setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w), type: w.world_type, worldName: w.name });
-      setMode("observe"); setView("instrument");
-      // arrival = the chart plots itself (SkyView remounts and re-registers first)
-      window.setTimeout(() => beginArrivalRef.current(), 0);
-    }} />;
+    onObserve={(w) => { setWorldVantage({ pos: w.host_star.galactic_xyz_pc, label: w.host_star.catalog_id, world: parseWorld(w) }); setView("instrument"); }} />;
   if (error) return <div style={{ padding: 24, color: "#ff9" }}>Failed to load: {error}</div>;
   if (!sky) return <div style={{ padding: 24 }}>loading catalog…</div>;
 
   const focusId = hoverId ?? selection[0] ?? draft[draft.length - 1] ?? null;
   const focusDir = focusId ? dirById.get(focusId) : undefined;
   const focusMeta = focusId ? metaById.get(focusId) : undefined;
-  const focusName = focusMeta ? focusMeta.name || focusMeta.id : null;
   const pendingLabelName = pendingLabel ? metaById.get(pendingLabel)?.name || pendingLabel : null;
-
-  // Record the current focus object into the survey log; unnamed stars get the next VOEC-###.
-  const recordSurvey = () => {
-    if (!focusId || !focusDir || !focusMeta) return;
-    const named = !!focusMeta.name && focusMeta.name !== focusMeta.id;
-    const n = survey.filter((e) => e.designation.startsWith("VOEC-")).length + 1;
-    const designation = named ? focusMeta.name : `VOEC-${String(n).padStart(3, "0")}`;
-    setSurvey((s) => [...s, {
-      id: uid(), designation, objectId: focusId, raDeg: raOf(focusDir), decDeg: decOf(focusDir),
-      mag: focusMeta.mag, sensor: "plot", atYears: tYears, note: "", createdAtYears: tYears,
-    }]);
-    chime();
-  };
-
-  // Switch instrument mode; tools live in MEASURE only, so leaving it disarms them.
-  const goMode = (m: Mode) => {
-    setMode(m);
-    if (m !== "measure") { setTool("select"); setDraft([]); setPendingLabel(null); }
-    uiTick();
-  };
-
-  // Wire the keyboard action ids to handlers (sound calls no-op when audio is off).
-  dispatchRef.current = (a: KbAction) => {
-    switch (a.kind) {
-      case "mode": goMode(a.mode); break;
-      case "projection": { const nx: Projection = projection === "gnomonic" ? "fisheye" : projection === "fisheye" ? "dome" : "gnomonic"; setProjection(nx); uiTick(); break; }
-      case "zoom": nudgeFov(a.dir === 1 ? 1 / 1.4 : 1.4); break;
-      case "playLocal": setLocalPlaying((p) => !p); uiClack(); break;
-      case "playEpoch": setEpochPlaying((p) => !p); uiClack(); break;
-      case "stepLocal": setLocalYears((v) => v + a.dir * localScale * 0.1); break;
-      case "milkyway": setShowMilkyWay((v) => !v); uiTick(); break;
-      case "trails": if (worldVantage) { setBodyTrails((v) => !v); uiTick(); } break;
-      case "gallery": setView("gallery"); break;
-      case "escape":
-        if (view === "gallery") setView("instrument");
-        else if (showHelp) setShowHelp(false);
-        else if (mode !== "observe") { goMode("observe"); setSelection([]); }
-        else setSelection([]);
-        break;
-      case "record": recordSurvey(); break;
-      case "propose": if (selection.length === 1) findFromStar(selection[0]!); break;
-      case "controls": setCtlOpen((o) => !o); uiTick(); break;
-      case "help": setShowHelp((h) => !h); uiTick(); break;
-    }
-  };
 
   const cap = PROPAGATION_MODELS.rectilinear.honestCapYears;
   const speculative = Math.abs(epochYears) > cap;
-  // local clock reads in world-native units; add a "few orbits" scale when observing a world
   const localScales = worldClock ? [...LOCAL_SCALES, { label: "±3 orbits", years: 3 * worldClock.orbitYears }] : LOCAL_SCALES;
   const localReadout = worldClock
     ? (worldClock.locked
-      ? `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · ◑ no solar day`
+      ? `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · no solar day (locked)`
       : `${(localYears / worldClock.orbitYears).toFixed(2)} orbits · ${(localYears * 365.25 / worldClock.rotDays).toFixed(1)} local-days`)
     : fmtT(localYears);
-  // compass tape: azimuth of the view centre in the local horizon (gnomonic/fisheye; the
-  // dome's horizon carries its own cardinal letters)
-  const viewHz = apparatus && projection !== "dome" ? horizontalOf(apparatus.o, apparatus.obs, viewDir, tYears) : null;
 
   return (
     <div className="app">
-      <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ Worlds</button>
-      {showHelp && <KbHelp onClose={() => setShowHelp(false)} />}
+      <button className="viewtoggle" onClick={() => setView("gallery")}>⊞ World gallery</button>
       {speculative && (
         <div className="speculative">
-          ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)} · positions are extrapolation, not data
+          ⚠ SPECULATIVE — |t| &gt; {fmtT(cap)}. Beyond the rectilinear model's validated range; these
+          positions are extrapolation, not data. (Galactic-orbit propagation extends this to ~1 Myr.)
         </div>
       )}
       <SkyView
@@ -646,109 +313,33 @@ export function App() {
         figures={figureArcs} labels={labelSprites}
         onHoverIndex={(i) => setHoverId(i == null ? null : inertial[i]?.id ?? null)}
         onPickIndex={pick} onFov={setFov} fovRef={(fn) => (setFovRef.current = fn)}
-        exposureRef={(fn) => (setExposureRef.current = fn)} onLook={setViewDir}
-        pulseRef={(fn) => (pulseFnRef.current = fn)} arrivalRef={(fn) => (beginArrivalRef.current = fn)}
-        links={linkArcs} drift={driftSegs}
-        milkyWayPoints={mwPoints} bodies={bodyMarkers} paths={trailPaths} plotTime={tYears}
+        exposureRef={(fn) => (setExposureRef.current = fn)}
+        milkyWayPoints={mwPoints} bodies={bodyMarkers}
         projection={projection} horizonBasis={horizonBasis}
         sun={{ dirIcrs: sun && sun.altDeg > -2 ? sun.dir : null, radiusDeg: GLARE_DEG }}
       />
 
-      {/* --- chrome furniture: brackets, tape, world header, status strip, mode bar --- */}
-      <span className="bk tl" /><span className="bk tr" /><span className="bk bl" /><span className="bk br" />
-      {viewHz && <CompassTape azDeg={viewHz.azDeg} altDeg={viewHz.altDeg} />}
-      <WorldHeader worldClock={worldClock} hostLabel={worldVantage?.label ?? null} vantage={vantage} />
-      <NextEventChip scan={scan} t={tYears} observing={!!worldVantage} />
-      <StatusStrip azDeg={viewHz?.azDeg ?? null} mode={mode} projection={projection} fov={fov} readout={localReadout} />
-      <div className="modebar">
-        {MODES.map((m, i) => (
-          <button key={m} className={mode === m ? "active" : ""} onClick={() => goMode(m)}>
-            <span className="num">{i + 1}</span>{m}
-          </button>
-        ))}
-      </div>
-
-      {/* --- instrument config (H) --- */}
-      <div className="controls">
-        <div className="cbar" onClick={() => setCtlOpen((o) => !o)}>
-          <span className="t">Config</span><span className="caret">{ctlOpen ? "▾" : "▸ H"}</span>
-        </div>
-        {ctlOpen && (
-          <Toolbar vantage={vantage}
-            setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
-            worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
-            fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
-            showMilkyWay={showMilkyWay} onMilkyWay={() => { setShowMilkyWay((v) => !v); uiTick(); }}
-            bodyTrails={bodyTrails} onBodyTrails={() => { setBodyTrails((v) => !v); uiTick(); }} observing={!!worldVantage}
-            sound={sound} onSound={() => { const on = !sound; setSound(on); setSoundEnabled(on); uiTick(); }}
-            onHelp={() => setShowHelp(true)}
-            projection={projection} onProjection={setProjection} />
-        )}
-      </div>
-
-      {/* --- the MODAL panel: each mode shows ONLY its own furniture --- */}
-      {mode === "target" && (
-        <ModePanel num={2} title="Target" onClose={() => goMode("observe")}>
-          <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG}
-            pm={focusId ? pmById.get(focusId) : undefined} />
-          <hr className="hair" />
-          {focusName && <div style={{ marginBottom: 8 }}><button onClick={recordSurvey}>+ record “{focusName}”</button></div>}
-          <AnalysisPanel candidates={candidates} scanned={candScanned} onScan={findCandidates}
-            anchorId={selection.length === 1 ? selection[0]! : null}
-            anchorName={selection.length === 1 ? metaById.get(selection[0]!)?.name || selection[0]! : null}
-            onProposeFrom={findFromStar}
-            epochDelta={epochDelta} onEpoch={setEpochDelta}
-            onSelect={(ids) => { setSelection(ids); setTool("select"); }} />
-        </ModePanel>
-      )}
-      {mode === "measure" && (
-        <ModePanel num={3} title="Measure" onClose={() => goMode("observe")}>
-          <MeasureDial />
-          <div className="btns" style={{ marginBottom: 8 }}>
-            {(["select", ...MEASURE_TOOLS, "figure", "label"] as Tool[]).map((t) =>
-              <button key={t} className={tool === t ? "active" : ""} onClick={() => onTool(t)}>{TOOL_LABEL[t]}</button>)}
-          </div>
-          {tool === "alignment" && <div style={{ marginBottom: 6 }}><button disabled={selection.length < 3} onClick={finishAlignment}>finish alignment ({selection.length})</button></div>}
-          {tool === "figure" && <FigureFinish draft={draft} onFinish={finishFigure} />}
-          {tool === "select" && selection.length >= 2 && <GroupFinish count={selection.length} onFinish={makeGroup} />}
-          {pendingLabelName && (
-            <div style={{ marginBottom: 6 }}>
-              <div className="muted">label “{pendingLabelName}”</div>
-              <InlineForm placeholder="label text" initial={pendingLabelName} onSubmit={submitLabel} onCancel={() => setPendingLabel(null)} />
-            </div>
-          )}
-          <Section title="Measurements" meta={results.length || null} defaultOpen>
-            <Measurements results={results} metaById={metaById}
-              onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
-          </Section>
-          <Section title="Annotations" meta={annotations.length || null}>
-            <Annotations annotations={annotations} figures={figures}
-              onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
-              onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
-          </Section>
-        </ModePanel>
-      )}
-      {mode === "events" && (
-        <ModePanel num={4} title="Events" onClose={() => goMode("observe")}>
-          <EventScanner scan={scan} worldClock={worldClock} observing={!!worldVantage}
-            onScan={(span) => setScanReq({ from: tYears, span })} onJump={(t) => { goTo(t); chime(); }} />
-        </ModePanel>
-      )}
-      {mode === "log" && (
-        <ModePanel num={5} title="Log" onClose={() => goMode("observe")}>
-          <Section title="Survey log" meta={survey.length || null} defaultOpen>
-            <SurveyPanel entries={survey} focusName={focusName} onRecord={recordSurvey}
-              onJump={(t, id) => { goTo(t); setSelection([id]); setTool("select"); }}
-              onDelete={(id) => setSurvey((s) => s.filter((e) => e.id !== id))} />
-          </Section>
-          <Section title="Notebook" meta={(notebook.markers.length + notebook.notes.length) || null} defaultOpen>
-            <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
-              onJump={(t, ids) => { goTo(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
-              onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
-              onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
-          </Section>
-        </ModePanel>
-      )}
+      <aside className="side">
+        <Toolbar tool={tool} onTool={onTool} vantage={vantage}
+          setVantage={(v) => { setVantage(v); setWorldVantage(null); }}
+          worldVantageLabel={worldVantage?.label ?? null} onClearWorldVantage={() => setWorldVantage(null)}
+          fov={fov} nudgeFov={nudgeFov} exposure={exposure} onExposure={(v) => { setExposure(v); setExposureRef.current(v); }}
+          showMilkyWay={showMilkyWay} onMilkyWay={() => setShowMilkyWay((v) => !v)}
+          projection={projection} onProjection={setProjection}
+          selection={selection} draft={draft}
+          onFinishFigure={finishFigure} onMakeGroup={makeGroup} onFinishAlignment={finishAlignment}
+          pendingLabelName={pendingLabelName} onSubmitLabel={submitLabel} onCancelLabel={() => setPendingLabel(null)} />
+        <Readout o={apparatus?.o} obs={apparatus?.obs} t={tYears} dir={focusDir} meta={focusMeta} sun={sun} glareDeg={GLARE_DEG} />
+        <Measurements results={results} metaById={metaById}
+          onDelete={(id) => setMeasurements((m) => m.filter((x) => x.id !== id))} onClear={() => setMeasurements([])} />
+        <Annotations annotations={annotations} figures={figures}
+          onRename={(id, name) => setAnnotations((a) => a.map((x) => (x.id === id && x.kind !== "label" ? { ...x, name } : x)))}
+          onDelete={(id) => setAnnotations((a) => a.filter((x) => x.id !== id))} />
+        <NotebookPanel notebook={notebook} metaById={metaById} onAddNote={addNote} onAddMarker={addMarker}
+          onJump={(t, ids) => { goTo(t); if (ids?.length) { setSelection(ids); setTool("select"); } }}
+          onDeleteNote={(id) => setNotebook((nb) => ({ ...nb, notes: nb.notes.filter((n) => n.id !== id) }))}
+          onDeleteMarker={(id) => setNotebook((nb) => ({ ...nb, markers: nb.markers.filter((m) => m.id !== id) }))} />
+      </aside>
 
       <div className="timebars">
         <TimeControl label="epoch" value={epochYears} setValue={setEpochYears}
@@ -772,12 +363,15 @@ function Toolbar(props: {
   worldVantageLabel: string | null; onClearWorldVantage: () => void;
   fov: number; nudgeFov: (f: number) => void; exposure: number; onExposure: (v: number) => void;
   showMilkyWay: boolean; onMilkyWay: () => void;
-  bodyTrails: boolean; onBodyTrails: () => void; observing: boolean;
-  sound: boolean; onSound: () => void; onHelp: () => void;
   projection: Projection; onProjection: (p: Projection) => void;
+  selection: string[]; draft: string[];
+  onFinishFigure: (name: string) => void; onMakeGroup: (name: string) => void; onFinishAlignment: () => void;
+  pendingLabelName: string | null; onSubmitLabel: (t: string) => void; onCancelLabel: () => void;
 }) {
+  const [naming, setNaming] = useState<null | "figure" | "group">(null);
   return (
-    <div className="ctl">
+    <div className="panel">
+      <h2>Instrument</h2>
       <div className="row"><span className="k">vantage</span>
         <span className="btns">
           <button className={!props.worldVantageLabel && props.vantage === "alpha-cen" ? "active" : ""} onClick={() => props.setVantage("alpha-cen")}>Alpha Cen</button>
@@ -799,179 +393,65 @@ function Toolbar(props: {
         <input type="range" min={-3} max={4} step={0.1} value={props.exposure} onChange={(e) => props.onExposure(Number(e.target.value))} style={{ width: 130 }} />
       </div>
       <div className="row" style={{ marginTop: 6 }}><span className="k">background</span>
-        <span className="btns">
-          <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
-          <button className={props.bodyTrails ? "active" : ""} onClick={props.onBodyTrails} disabled={!props.observing}
-            title="draw each body's on-sky orbit track with even-time tick marks">trails</button>
-        </span>
+        <button className={props.showMilkyWay ? "active" : ""} onClick={props.onMilkyWay}>Milky Way</button>
       </div>
-      {props.bodyTrails && props.observing && (
-        <div className="faint" style={{ fontSize: 10.5, marginTop: 3 }}>trail dots = 1/24 of each body's orbit — bunched = slow, spread = fast.</div>
-      )}
-      <div className="row" style={{ marginTop: 8 }}><span className="k">projection</span>
+      <div className="row" style={{ marginTop: 6 }}><span className="k">projection</span>
         <span className="btns">
           {(["gnomonic", "fisheye", "dome"] as Projection[]).map((p) =>
             <button key={p} className={props.projection === p ? "active" : ""} onClick={() => props.onProjection(p)}>{p === "gnomonic" ? "flat" : p}</button>)}
         </span>
       </div>
-      <div className="row" style={{ marginTop: 6 }}><span className="k">audio · keys</span>
-        <span className="btns">
-          <button className={props.sound ? "active" : ""} onClick={props.onSound} title="toggle instrument sound">{props.sound ? "sound on" : "sound off"}</button>
-          <button onClick={props.onHelp} title="keyboard shortcuts (press ?)">⌨ keys</button>
-        </span>
+      <div className="muted" style={{ marginTop: 8 }}>tools</div>
+      <div className="btns" style={{ marginTop: 4 }}>
+        {(["select", ...MEASURE_TOOLS, "figure", "label"] as Tool[]).map((t) =>
+          <button key={t} className={props.tool === t ? "active" : ""} onClick={() => props.onTool(t)}>{TOOL_LABEL[t]}</button>)}
       </div>
+      {props.tool === "alignment" && <div style={{ marginTop: 6 }}><button disabled={props.selection.length < 3} onClick={props.onFinishAlignment}>finish alignment ({props.selection.length})</button></div>}
+      {props.tool === "figure" && (naming === "figure"
+        ? <InlineForm placeholder="figure / constellation name" onSubmit={(n) => { props.onFinishFigure(n); setNaming(null); }} onCancel={() => setNaming(null)} />
+        : <div style={{ marginTop: 6 }}><button disabled={props.draft.length < 2} onClick={() => setNaming("figure")}>finish figure ({props.draft.length} stars)</button></div>)}
+      {props.tool === "select" && props.selection.length >= 2 && (naming === "group"
+        ? <InlineForm placeholder="group name" onSubmit={(n) => { props.onMakeGroup(n); setNaming(null); }} onCancel={() => setNaming(null)} />
+        : <div style={{ marginTop: 6 }}><button onClick={() => setNaming("group")}>group {props.selection.length} stars</button></div>)}
+      {props.pendingLabelName && (
+        <div style={{ marginTop: 6 }}>
+          <div className="muted">label “{props.pendingLabelName}”</div>
+          <InlineForm placeholder="label text" initial={props.pendingLabelName} onSubmit={props.onSubmitLabel} onCancel={props.onCancelLabel} />
+        </div>
+      )}
     </div>
   );
 }
 
-/** Compass / azimuth tape (avionics chrome): cardinal letters + 5° ticks scrolling with the
- *  view-centre azimuth, bearing readout in the `241°T` pattern. */
-function CompassTape(props: { azDeg: number; altDeg: number }) {
-  const az = ((props.azDeg % 360) + 360) % 360;
-  const PX = 3.4; // px per degree
-  const ticks: ReactNode[] = [];
-  const lo = Math.floor((az - 44) / 5) * 5, hi = az + 44;
-  const CARD: Record<number, string> = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
-  for (let d = lo; d <= hi; d += 5) {
-    const x = 150 + (d - az) * PX;
-    if (x < 0 || x > 300) continue;
-    const norm = ((d % 360) + 360) % 360;
-    const major = norm % 45 === 0;
-    ticks.push(<span key={d} className={"tick" + (major ? " major" : "")} style={{ left: x }} />);
-    if (major && CARD[norm]) ticks.push(<span key={`l${d}`} className="tlabel" style={{ left: x }}>{CARD[norm]}</span>);
-  }
-  // the tape strip GLIDES (physics); the numeric readout TICKS (machine cadence)
-  const azTick = useTicked(az, 250), altTick = useTicked(props.altDeg, 250);
-  return (
-    <div className="tapewrap">
-      <div className="tape">{ticks}<span className="centermark" /></div>
-      <div className="bearing">{azTick.toFixed(0).padStart(3, "0")}°<span className="sup">T</span> · {altTick >= 0 ? "+" : ""}{altTick.toFixed(0)}°<span className="sup">ALT</span></div>
-    </div>
-  );
-}
-
-/** Typographic world header (top-left): where the instrument is standing. */
-function WorldHeader(props: { worldClock: WorldClock | null; hostLabel: string | null; vantage: Vantage }) {
-  const name = props.worldClock ? props.worldClock.name : props.vantage === "sol" ? "Sol III" : "Alpha Cen vantage";
-  const sub = props.worldClock
-    ? `${props.worldClock.type.replace(/_/g, " ")} · ${props.hostLabel ?? ""}${props.worldClock.locked ? " · ◑ locked" : ""}`
-    : "relocated catalog sky";
-  return (
-    <div className="worldhead">
-      <div className="name">{name}</div>
-      <div className="sub">{sub}</div>
-    </div>
-  );
-}
-
-/** Next-event countdown chip (OBSERVE furniture): the first scanned event still ahead.
- *  The countdown ticks on a machine cadence. */
-function NextEventChip(props: { scan: Scan | null; t: number; observing: boolean }) {
-  const t = useTicked(props.t, 500);
-  if (!props.observing || !props.scan) return null;
-  const next = props.scan.events.find((e) => e.t > t);
-  if (!next) return null;
-  return (
-    <div className="nextevent">
-      <div className="sup">Next event</div>
-      <div className="val">{next.label} · <b>T−{fmtT(next.t - t)}</b></div>
-    </div>
-  );
-}
-
-/** Always-on instrument status strip (bottom centre): the avionics readout line —
- *  superscript category labels over ticking values (HEAD / MODE / LOC / FOV / SYS). */
-function StatusStrip(props: { azDeg: number | null; mode: Mode; projection: Projection; fov: number; readout: string }) {
-  const az = useTicked(props.azDeg, 250), fov = useTicked(props.fov, 250), loc = useTicked(props.readout, 500);
-  const proj = props.projection === "gnomonic" ? "FLT" : props.projection === "fisheye" ? "FSH" : "DOM";
-  return (
-    <div className="statusbar">
-      {az != null && <span className="avcell"><span className="sup">Head</span><span className="val">{az.toFixed(0).padStart(3, "0")}°T</span></span>}
-      <span className="avcell"><span className="sup">Mode</span><span className="val">{props.mode.toUpperCase()} · {proj}</span></span>
-      <span className="avcell"><span className="sup">Loc T</span><span className="val">{loc}</span></span>
-      <span className="avcell"><span className="sup">Fov</span><span className="val">{fov.toFixed(0)}°</span></span>
-      <span className="avcell"><span className="sup">Sys</span><span className="val">POS/INS ▪</span></span>
-    </div>
-  );
-}
-
-/** The modal paper panel: each mode shows only its own furniture. */
-function ModePanel(props: { num: number; title: string; onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="modepanel">
-      <div className="mp-title"><span><span className="mnum">{props.num}</span> · {props.title}</span>
-        <button className="x" onClick={props.onClose}>×</button></div>
-      <div className="mp-body">{props.children}</div>
-    </div>
-  );
-}
-
-/** MEASURE dial ornament: the reference's protractor frame (decorative furniture, SVG). */
-function MeasureDial() {
-  const ticks: ReactNode[] = [];
-  for (let d = 0; d < 360; d += 10) {
-    const a = (d * Math.PI) / 180, major = d % 30 === 0;
-    const r1 = major ? 26 : 29, r2 = 32;
-    ticks.push(<line key={d} x1={40 + Math.cos(a) * r1} y1={36 + Math.sin(a) * r1}
-      x2={40 + Math.cos(a) * r2} y2={36 + Math.sin(a) * r2} stroke="#1a1a1a" strokeWidth={major ? 1.2 : 0.6} />);
-  }
-  return (
-    <div className="dial">
-      <svg width="80" height="72" viewBox="0 0 80 72">
-        <circle cx="40" cy="36" r="32" fill="none" stroke="#f01428" strokeWidth="1" strokeDasharray="2 3" />
-        <circle cx="40" cy="36" r="18" fill="none" stroke="#1a1a1a" strokeWidth="1" />
-        {ticks}
-        <line x1="22" y1="36" x2="58" y2="36" stroke="#f01428" strokeWidth="1" />
-      </svg>
-    </div>
-  );
-}
-
-function FigureFinish(props: { draft: string[]; onFinish: (name: string) => void }) {
-  const [naming, setNaming] = useState(false);
-  return naming
-    ? <InlineForm placeholder="figure / constellation name" onSubmit={(n) => { props.onFinish(n); setNaming(false); }} onCancel={() => setNaming(false)} />
-    : <div style={{ marginBottom: 6 }}><button disabled={props.draft.length < 2} onClick={() => setNaming(true)}>finish figure ({props.draft.length} stars)</button></div>;
-}
-
-function GroupFinish(props: { count: number; onFinish: (name: string) => void }) {
-  const [naming, setNaming] = useState(false);
-  return naming
-    ? <InlineForm placeholder="group name" onSubmit={(n) => { props.onFinish(n); setNaming(false); }} onCancel={() => setNaming(false)} />
-    : <div style={{ marginBottom: 6 }}><button onClick={() => setNaming(true)}>group {props.count} stars</button></div>;
-}
-
-/** TARGET readout: an avionics cluster of superscript-labelled cells (HEAD/MODE pattern). */
-function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; dir?: Vec3; meta?: InertialStar; sun: { dir: Vec3; altDeg: number } | null; glareDeg: number; pm?: number }) {
-  if (!props.dir || !props.meta || !props.o || !props.obs) return <div className="muted">select or hover an object to target it</div>;
+function Readout(props: { o?: PlanetOrientation; obs?: GeoObserver; t: number; dir?: Vec3; meta?: InertialStar; sun: { dir: Vec3; altDeg: number } | null; glareDeg: number }) {
+  if (!props.dir || !props.meta || !props.o || !props.obs) return <div className="panel"><h2>Readout</h2><div className="muted">hover or select a star</div></div>;
   const d = props.dir, m = props.meta;
   const h = horizontalOf(props.o, props.obs, d, props.t);
   const rst = riseSetOf(props.o, props.obs, d, props.t);
-  const ev = rst.circumpolar ? "CIRCUMPOLAR" : rst.neverRises ? "NEVER RISES"
-    : `${fmtH(rst.riseYears!, props.t)} / ${fmtH(rst.setYears!, props.t)}`;
+  const ev = rst.circumpolar ? "circumpolar" : rst.neverRises ? "never rises"
+    : `rise ${fmtH(rst.riseYears!, props.t)}, set ${fmtH(rst.setYears!, props.t)}`;
   let heliacal: { elong: number; washed: boolean; sunUp: boolean } | null = null;
   if (props.sun) {
     const s = props.sun.dir;
     const elong = Math.acos(Math.max(-1, Math.min(1, d[0] * s[0] + d[1] * s[1] + d[2] * s[2]))) * R2D;
     heliacal = { elong, sunUp: props.sun.altDeg > 0, washed: props.sun.altDeg > -2 && elong < props.glareDeg };
   }
-  const cell = (sup: string, val: string, warn = false) => (
-    <span className="avcell"><span className="sup">{sup}</span><span className={"val" + (warn ? " warn" : "")}>{val}</span></span>
-  );
   return (
-    <>
-      <div style={{ marginBottom: 8, fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase" }}>{m.name || m.id}</div>
-      <div className="avgrid">
-        {cell("RA / Dec", `${raOf(d).toFixed(2)}° ${decOf(d).toFixed(2)}°`)}
-        {cell("Alt / Az", `${h.altDeg.toFixed(1)}° ${h.azDeg.toFixed(1)}°`)}
-        {cell("Mag", m.mag.toFixed(2))}
-        {cell("Dist", `${m.distance_pc.toFixed(2)} pc`)}
-        {props.pm != null ? cell("PM", props.pm < 1000 ? `${props.pm.toFixed(1)} mas/yr` : `${(props.pm / 1000).toFixed(2)} ″/yr`) : null}
-        {cell("Transit", `${rst.transitAltitudeDeg.toFixed(1)}°`)}
-        {cell("Rise / Set", ev)}
-        {heliacal ? cell("Sun elong", `${heliacal.elong.toFixed(1)}°${heliacal.washed ? " · IN GLARE" : ""}`, heliacal.washed) : null}
-      </div>
-    </>
+    <div className="panel">
+      <h2>Readout</h2>
+      <div className="row"><span className="k">object</span><span className="v">{m.name || m.id}</span></div>
+      <div className="row"><span className="k">RA / Dec</span><span className="v">{raOf(d).toFixed(2)}° / {decOf(d).toFixed(2)}°</span></div>
+      <div className="row"><span className="k">alt / az</span><span className="v">{h.altDeg.toFixed(2)}° / {h.azDeg.toFixed(2)}°</span></div>
+      <div className="row"><span className="k">magnitude</span><span className="v">{m.mag.toFixed(2)}</span></div>
+      <div className="row"><span className="k">distance</span><span className="v">{m.distance_pc.toFixed(2)} pc</span></div>
+      <div className="row"><span className="k">transit alt</span><span className="v">{rst.transitAltitudeDeg.toFixed(1)}°</span></div>
+      <div className="row"><span className="k">events</span><span className="v">{ev}</span></div>
+      {heliacal && (
+        <div className="row"><span className="k">sun elong.</span>
+          <span className="v">{heliacal.elong.toFixed(1)}°{heliacal.washed ? " · lost in glare" : heliacal.sunUp ? " · clear of the sun" : ""}</span>
+        </div>
+      )}
+    </div>
   );
 }
 function fmtH(e: number, now: number) { const h = hoursFromNow(e, now); return `${h >= 0 ? "+" : ""}${h.toFixed(1)} h`; }
@@ -979,8 +459,8 @@ function fmtH(e: number, now: number) { const h = hoursFromNow(e, now); return `
 function Measurements(props: { results: MeasurementResult[]; metaById: Map<string, InertialStar>; onDelete: (id: string) => void; onClear: () => void }) {
   const name = (id: string) => props.metaById.get(id)?.name || id;
   return (
-    <>
-      {props.results.length > 0 && <div style={{ marginBottom: 6 }}><button className="x" onClick={props.onClear}>clear all</button></div>}
+    <div className="panel">
+      <h2>Measurements {props.results.length > 0 && <button className="x" onClick={props.onClear}>clear</button>}</h2>
       {props.results.length === 0 && <div className="muted">pick a measure tool, click two stars</div>}
       <div className="mlist">
         {props.results.map((r) => (
@@ -990,7 +470,7 @@ function Measurements(props: { results: MeasurementResult[]; metaById: Map<strin
           </div>
         ))}
       </div>
-    </>
+    </div>
   );
 }
 function measureValue(r: MeasurementResult): string {
@@ -1003,9 +483,10 @@ function measureValue(r: MeasurementResult): string {
 function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure[]; onRename: (id: string, name: string) => void; onDelete: (id: string) => void }) {
   const figState = new Map(props.figures.map((f) => [f.id, f]));
   const [editing, setEditing] = useState<string | null>(null);
-  if (props.annotations.length === 0) return <div className="muted">draw figures, pin labels, group stars</div>;
+  if (props.annotations.length === 0) return <div className="panel"><h2>Annotations</h2><div className="muted">draw figures, pin labels, group stars</div></div>;
   return (
-    <>
+    <div className="panel">
+      <h2>Annotations</h2>
       <div className="mlist">
         {props.annotations.map((a) => {
           const broken = a.kind === "figure" && figState.get(a.id)?.ok === false;
@@ -1030,7 +511,7 @@ function Annotations(props: { annotations: Annotation[]; figures: ResolvedFigure
           );
         })}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1042,7 +523,8 @@ function NotebookPanel(props: {
   const name = (id: string) => props.metaById.get(id)?.name || id;
   const [adding, setAdding] = useState<null | "note" | "marker">(null);
   return (
-    <>
+    <div className="panel">
+      <h2>Notebook</h2>
       <div className="btns"><button onClick={() => setAdding("note")}>+ note</button><button onClick={() => setAdding("marker")}>+ time marker</button></div>
       {adding === "note" && <InlineForm placeholder="observation / note" multiline onSubmit={(t) => { props.onAddNote(t); setAdding(null); }} onCancel={() => setAdding(null)} />}
       {adding === "marker" && <InlineForm placeholder="marker label" onSubmit={(l) => { props.onAddMarker(l); setAdding(null); }} onCancel={() => setAdding(null)} />}
@@ -1067,12 +549,12 @@ function NotebookPanel(props: {
           </div>
         ))}
       </div>
-    </>
+    </div>
   );
 }
 
-/** One timeline control (Gate B-FIX 2): a labelled play/rate/slider/scale row over one axis.
- *  Rendered twice — an epoch (deep) bar and a local (world-native fast) bar. */
+/** One timeline control: labelled play/rate/slider/scale row over one time axis. Rendered
+ *  twice -- an epoch (deep) bar and a local (world-native fast) bar. */
 function TimeControl(props: {
   label: string; value: number; setValue: (v: number) => void;
   scale: number; setScale: (s: number) => void; scales: { label: string; years: number }[];
@@ -1095,129 +577,5 @@ function TimeControl(props: {
       <button onClick={() => props.setValue(0)} title="reset this clock to now">now</button>
       {props.right}
     </div>
-  );
-}
-
-/** Keyboard-shortcuts overlay (Gate C). */
-function KbHelp(props: { onClose: () => void }) {
-  return (
-    <div className="kbhelp" onClick={props.onClose}>
-      <div className="card" onClick={(e) => e.stopPropagation()}>
-        <h3>Keyboard <button className="x" onClick={props.onClose}>×</button></h3>
-        {SHORTCUTS.map((s) => (
-          <div key={s.keys} className="kbrow"><span className="k">{s.keys}</span><span className="l">{s.label}</span></div>
-        ))}
-        <div className="hint">Shortcuts pause while a text field is focused. Press ? or Esc to close.</div>
-      </div>
-    </div>
-  );
-}
-
-/** Analysis (B3 + B5): the epoch comparator (ghost drift over a span) and candidate
- *  regularities (co-moving groups, alignments, anomalies). Everything here is a proposal —
- *  the human selects, confirms, names, records. Compute never authors a finished pattern. */
-function AnalysisPanel(props: {
-  candidates: Candidate[]; scanned: boolean; onScan: () => void;
-  anchorId: string | null; anchorName: string | null; onProposeFrom: (id: string) => void;
-  epochDelta: number; onEpoch: (y: number) => void; onSelect: (ids: string[]) => void;
-}) {
-  return (
-    <>
-      <div className="muted">epoch drift</div>
-      <div className="seg" style={{ display: "flex", marginTop: 4 }}>
-        {EPOCHS.map((e) => (
-          <button key={e.label} style={{ flex: 1 }} className={props.epochDelta === e.y ? "active" : ""}
-            onClick={() => props.onEpoch(e.y)}>{e.label}</button>
-        ))}
-      </div>
-      <div className="faint" style={{ marginTop: 4, fontSize: 10.5 }}>ghost tracks — where the fastest movers drift over the span.</div>
-      <hr className="hair" />
-      <div className="btns">
-        {props.anchorId
-          ? <button onClick={() => props.onProposeFrom(props.anchorId!)} title="propose candidates that involve the selected star">◇ propose from {props.anchorName}</button>
-          : <span className="muted">select one star to propose from it</span>}
-        <button onClick={props.onScan} title="scan the whole field for regularities">scan field</button>
-      </div>
-      {props.scanned && props.candidates.length === 0 && <div className="muted" style={{ marginTop: 8 }}>no candidates found</div>}
-      {props.candidates.length > 0 && (
-        <div className="mlist" style={{ marginTop: 8 }}>
-          {props.candidates.map((c) => (
-            <div key={c.key} className="mitem">
-              <div className="top">
-                <button className="link" onClick={() => props.onSelect(c.objectIds)}>{c.label}</button>
-                <span className="faint" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>{c.kind}</span>
-              </div>
-              <div className="ids">{c.detail}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="faint" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4 }}>
-        candidates only — compute proposes, you dispose. Select to inspect; record what you confirm.
-      </div>
-    </>
-  );
-}
-
-/** Event scanner (B4): on-demand rise/set (day-night) + body closest approaches, as
- *  candidate events the human can jump to. Nothing is auto-named. */
-function EventScanner(props: {
-  scan: Scan | null; worldClock: WorldClock | null; observing: boolean;
-  onScan: (span: number) => void; onJump: (t: number) => void;
-}) {
-  if (!props.observing) return <div className="muted">observe a world to scan its sky</div>;
-  const yr = props.worldClock?.orbitYears ?? 1;
-  const daySpan = props.worldClock && !props.worldClock.locked ? props.worldClock.rotDays / 365.25 : yr;
-  const KIND: Record<SkyEvent["kind"], string> = { day: "day/night", conj: "conjunction", eclipse: "eclipse" };
-  return (
-    <>
-      <div className="btns">
-        <button onClick={() => props.onScan(daySpan)} title="rise/set/transit + approaches over the next local day">scan next day</button>
-        <button onClick={() => props.onScan(yr)} title="approaches over the next local year">next year</button>
-      </div>
-      {props.scan && (props.scan.events.length === 0
-        ? <div className="muted" style={{ marginTop: 8 }}>no rise/set or close approaches in this window</div>
-        : <div className="mlist" style={{ marginTop: 8 }}>
-            {props.scan.events.map((e, i) => (
-              <div key={i} className="mitem">
-                <div className="top">
-                  <button className="link" onClick={() => props.onJump(e.t)}>{e.label}</button>
-                  <span className="faint" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>{KIND[e.kind]}</span>
-                </div>
-                <div className="ids">t+{fmtT(e.t - props.scan!.from)}{e.recurYears != null && props.worldClock
-                  ? ` · recurs ~${(e.recurYears * 365.25 / props.worldClock.rotDays).toFixed(1)} local-d`
-                  : e.recurYears != null ? ` · recurs ~${fmtT(e.recurYears)}` : ""}</div>
-              </div>
-            ))}
-          </div>)}
-      <div className="faint" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4 }}>candidates — computed rise/set &amp; closest approaches; confirm by eye.</div>
-    </>
-  );
-}
-
-/** Survey log (B6): the human's record of candidate objects. Unnamed → VOEC-###. */
-function SurveyPanel(props: {
-  entries: SurveyEntry[]; focusName: string | null;
-  onRecord: () => void; onJump: (t: number, id: string) => void; onDelete: (id: string) => void;
-}) {
-  return (
-    <>
-      {props.focusName
-        ? <button onClick={props.onRecord} title="add the focused object to the survey log">+ record “{props.focusName}”</button>
-        : <div className="muted">hover or select an object to record it</div>}
-      {props.entries.length > 0 && (
-        <div className="mlist" style={{ marginTop: 8 }}>
-          {props.entries.slice().reverse().map((e) => (
-            <div key={e.id} className="mitem">
-              <div className="top">
-                <button className="link" onClick={() => props.onJump(e.atYears, e.objectId)}>{e.designation}</button>
-                <span className="faint" style={{ fontSize: 11 }}><button className="x" onClick={() => props.onDelete(e.id)}>✕</button></span>
-              </div>
-              <div className="ids">{e.raDeg.toFixed(2)}° / {e.decDeg.toFixed(2)}° · m{e.mag.toFixed(1)} · {fmtT(e.atYears)}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
   );
 }

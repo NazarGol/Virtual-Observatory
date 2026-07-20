@@ -39,22 +39,13 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe("Phase 3 UI persistence (through the 6R modal chrome)", () => {
-  // The UI is modal now: LOG (key 5) holds survey+notebook, MEASURE (key 3) holds
-  // measurements+annotations. Wait for the chrome, pause the alive-by-default clock, then
-  // enter the mode under test with its number key.
-  const boot = async (user: ReturnType<typeof userEvent.setup>) => {
-    await screen.findByText("epoch");   // time bar = the app is loaded
-    await user.keyboard(" ");           // pause the local clock (plays by default)
-  };
-
+describe("Phase 3 UI persistence", () => {
   it("a note is created from the button and survives a reload", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    await boot(user);
-    await user.keyboard("5"); // LOG mode
+    await screen.findByText("Notebook");
 
-    await user.click(await screen.findByText("+ note"));
+    await user.click(screen.getByText("+ note"));
     await user.type(await screen.findByPlaceholderText("observation / note"), "Barnard crosses the meridian");
     await user.click(screen.getByText("save"));
 
@@ -63,18 +54,16 @@ describe("Phase 3 UI persistence (through the 6R modal chrome)", () => {
 
     unmount(); // simulate a reload
     render(<App />);
-    await boot(user);
-    await user.keyboard("5");
+    await screen.findByText("Notebook");
     expect(await screen.findByText(/Barnard crosses the meridian/)).toBeTruthy();
   });
 
   it("a time marker is created from the button and survives a reload", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    await boot(user);
-    await user.keyboard("5");
+    await screen.findByText("Notebook");
 
-    await user.click(await screen.findByText("+ time marker"));
+    await user.click(screen.getByText("+ time marker"));
     await user.type(await screen.findByPlaceholderText("marker label"), "epoch zero");
     await user.click(screen.getByText("save"));
 
@@ -83,29 +72,21 @@ describe("Phase 3 UI persistence (through the 6R modal chrome)", () => {
 
     unmount();
     render(<App />);
-    await boot(user);
-    await user.keyboard("5");
+    await screen.findByText("Notebook");
     expect(await screen.findByText(/epoch zero/)).toBeTruthy();
   });
 
   it("a figure persists across reload and reconnects its star IDs", async () => {
-    const user = userEvent.setup();
     localStorage.setItem("vobs.annotations.v1", serializeAnnotations([
       { id: "f1", kind: "figure", name: "Test line", nodeIds: ["A", "B"], edges: [[0, 1]], constellation: true, createdAtYears: 0 },
     ]));
     render(<App />);
-    await boot(user);
-    await user.keyboard("3"); // MEASURE mode
-    await user.click(await screen.findByText("Annotations")); // expand section
-    // appears in the annotations list, fully resolved (not flagged "missing")
+    // appears in the annotations panel, fully resolved (not flagged "missing")
     expect(await screen.findByText("Test line")).toBeTruthy();
     expect(screen.queryByText(/some stars missing/)).toBeNull();
 
     cleanup(); // reload
     render(<App />);
-    await boot(user);
-    await user.keyboard("3");
-    await user.click(await screen.findByText("Annotations"));
     expect(await screen.findByText("Test line")).toBeTruthy();
   });
 });

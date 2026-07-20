@@ -11,18 +11,10 @@ interface Props {
   onHoverIndex: (i: number | null) => void;
   onPickIndex: (i: number | null) => void;
   onFov: (fov: number) => void;
-  onLook: (dir: Vec3) => void;
   fovRef: (setFov: (f: number) => void) => void;
   exposureRef: (setExposure: (v: number) => void) => void;
-  pulseRef: (pulse: (dirs: Vec3[]) => void) => void;
-  arrivalRef: (begin: () => void) => void;
-  links: Vec3[][];
-  drift: { a: Vec3; b: Vec3 }[];
-  milkyWayPoints: { dir: Vec3 }[];
+  milkyWayPoints: { dir: Vec3; brightness: number }[];
   bodies: BodyMarker[];
-  paths: { pts: Vec3[]; color: number; periodYears: number }[];
-  /** sim time driving the crawl phase of orbital tracks */
-  plotTime: number;
   projection: "gnomonic" | "fisheye" | "dome";
   horizonBasis: { east: Vec3; north: Vec3; up: Vec3 };
   sun: { dirIcrs: Vec3 | null; radiusDeg: number };
@@ -39,12 +31,9 @@ export function SkyView(props: Props) {
     field.onHover = (i) => cb.current.onHoverIndex(i);
     field.onPick = (i) => cb.current.onPickIndex(i);
     field.onView = (f) => cb.current.onFov(f);
-    field.onLook = (d) => cb.current.onLook(d);
     fieldRef.current = field;
     cb.current.fovRef((f) => field.setFov(f));
     cb.current.exposureRef((v) => field.setExposure(v));
-    cb.current.pulseRef((dirs) => field.pulseAt(dirs));
-    cb.current.arrivalRef(() => field.beginArrival());
     const onResize = () => field.resize();
     window.addEventListener("resize", onResize);
     return () => { window.removeEventListener("resize", onResize); field.dispose(); fieldRef.current = null; };
@@ -57,10 +46,6 @@ export function SkyView(props: Props) {
   useEffect(() => { fieldRef.current?.setLabels(props.labels); }, [props.labels]);
   useEffect(() => { fieldRef.current?.setMilkyWayPoints(props.milkyWayPoints); }, [props.milkyWayPoints]);
   useEffect(() => { fieldRef.current?.setBodies(props.bodies); }, [props.bodies]);
-  useEffect(() => { fieldRef.current?.setPaths(props.paths); }, [props.paths]);
-  useEffect(() => { fieldRef.current?.setPlotTime(props.plotTime); }, [props.plotTime]);
-  useEffect(() => { fieldRef.current?.setLinkLines(props.links); }, [props.links]);
-  useEffect(() => { fieldRef.current?.setDriftTracks(props.drift); }, [props.drift]);
   useEffect(() => { fieldRef.current?.setHorizonBasis(props.horizonBasis.east, props.horizonBasis.north, props.horizonBasis.up); },
     [props.horizonBasis]);
   useEffect(() => { fieldRef.current?.setProjection(props.projection); }, [props.projection]);

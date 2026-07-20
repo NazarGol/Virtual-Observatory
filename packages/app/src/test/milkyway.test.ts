@@ -3,7 +3,7 @@
 // when the observer relocates -- it is not a static skybox. Bonus: from Sol the band's bright
 // side must point at the real galactic center (Sagittarius), which validates the frame.
 import { describe, it, expect } from "vitest";
-import { milkyWayGeometry, milkyWayStipple, stippleDensity } from "../milkyway";
+import { milkyWayGeometry } from "../milkyway";
 import type { Vec3 } from "@vobs/engine";
 
 const sepDeg = (a: Vec3, b: Vec3) =>
@@ -24,23 +24,5 @@ describe("Milky Way band is vantage-dependent, not a skybox", () => {
     const dec = (Math.asin(g[2]) * 180) / Math.PI;
     expect(Math.abs(ra - 266.4)).toBeLessThan(3);
     expect(Math.abs(dec + 28.9)).toBeLessThan(3);
-  });
-});
-
-describe("Milky Way stipple field (Phase 6R: structure is density)", () => {
-  it("is dense in the plane, thin at high latitude, and the dust lane is a sparser channel", () => {
-    // off the lane in the plane vs high latitude, at the same longitude
-    expect(stippleDensity(0.8, 0.06)).toBeGreaterThan(3 * stippleDensity(0.8, 0.4));
-    // toward the centre, the lane (beta ~ 0.012) is sparser than just off it
-    expect(stippleDensity(0, 0.012)).toBeLessThan(0.6 * stippleDensity(0, 0.08));
-    // bulge: centre denser than anticentre at the same off-lane latitude
-    expect(stippleDensity(0, 0.08)).toBeGreaterThan(2 * stippleDensity(Math.PI, 0.08));
-  });
-  it("emits deterministic unit directions and honours the requested count", () => {
-    const geo = milkyWayGeometry([0, 0, 0]);
-    const a = milkyWayStipple(geo, 500), b = milkyWayStipple(geo, 500);
-    expect(a.length).toBe(500);
-    expect(a[0]!.dir).toEqual(b[0]!.dir);
-    for (const p of a.slice(0, 20)) expect(Math.hypot(...p.dir)).toBeCloseTo(1, 6);
   });
 });

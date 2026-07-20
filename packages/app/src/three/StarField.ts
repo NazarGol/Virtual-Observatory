@@ -1,15 +1,15 @@
-// The Three.js scene for the instrument (Phase 6R: the PLOTTED sky). The relocated real sky
-// drawn as a stipple chart — cartography, not a planetarium: stars are discrete ink classes
-// (dots -> dotted-ring glyphs) from the plot.ts seam, the Milky Way is a dot-density field,
-// user lines are dotted ink. Pan (drag), FOV zoom, raycast hover/pick unchanged. No
-// astronomy happens here -- positions are inertial unit directions from @vobs/engine.
+// The Three.js scene for the instrument: the relocated sky as fixed-pixel point stars, with
+// pan (drag), FOV zoom (wide-field <-> telescopic), raycast hover/pick, a selection ring,
+// and measurement geodesic arcs. It is a plain class (not react-three-fiber) so the React
+// layer just feeds it engine output via setStars/setSelection/setOverlays. No astronomy
+// happens here -- positions are inertial unit directions from @vobs/engine.
 import * as THREE from "three";
 import type { Vec3 } from "@vobs/engine";
-import { magClass, ringedRanks } from "../plot";
 
 export interface StarPoint {
   dir: Vec3;
   mag: number;
+  bp_rp: number;
 }
 
 export interface BodyMarker {
@@ -18,50 +18,56 @@ export interface BodyMarker {
   kind: string;
   /** apparent angular diameter, degrees (a point below resolvability) */
   diamDeg: number;
-  /** sunlit fraction 0..1 (moons render as phases; host/undefined = full) */
-  illum?: number;
 }
 
 const R = 100;
 const R2D = 180 / Math.PI;
+const tint = (bp: number): [number, number, number] => {
+  const t = Math.max(0, Math.min(1, ((bp ?? 0.6) + 0.4) / 2.2));
+  return [0.62 + 0.38 * t, 0.72 + 0.12 * Math.sin(t * Math.PI), 1.0 - 0.45 * t];
+};
+// Brightness (Phase 5): the shader maps magnitude -> flux -> tone-mapped luminance so the
+// ~100x naked-eye range isn't linear-crushed; a size floor keeps faint stars from vanishing
+// sub-pixel; the brightest handful bloom. Exposure/gain is a live uniform.
+const MAG_ZERO_DEFAULT = 4.2; // magnitude that sits at mid-brightness at exposure 0
 
-
-// --- ink plates (Phase 6R, multi-pen plotter logic: semantic, never decorative) ---
-export const INK = { white: "#f2efe6", gold: "#f0dc84", blush: "#f0c8a8", signal: "#f01428" } as const;
-export const INK_HEX = { gold: 0xf0dc84, blush: 0xf0c8a8, dimgold: 0x8a7d4a, signal: 0xf01428 } as const;
-
-/** Dotted circle helper for canvas glyphs. */
-function dottedCircle(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, n: number, dotR: number, color: string): void {
-  g.fillStyle = color;
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    g.beginPath(); g.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, dotR, 0, Math.PI * 2); g.fill();
-  }
-}
-
-/** The host star: the largest concentric dotted-ring glyph, unmistakable, GOLD plate. */
-function hostGlyphTexture(): THREE.Texture {
-  const S = 128, c = document.createElement("canvas");
-  c.width = c.height = S;
+function ringTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
   const g = c.getContext("2d")!;
-  g.fillStyle = INK.gold;
-  g.beginPath(); g.arc(S / 2, S / 2, 5, 0, Math.PI * 2); g.fill();
-  dottedCircle(g, S / 2, S / 2, 16, 10, 1.8, INK.gold);
-  dottedCircle(g, S / 2, S / 2, 30, 16, 1.8, INK.gold);
-  dottedCircle(g, S / 2, S / 2, 45, 24, 1.8, INK.gold);
-  dottedCircle(g, S / 2, S / 2, 60, 32, 1.6, INK.gold);
+  g.strokeStyle = "#7fe9ff";
+  g.lineWidth = 5;
+  g.beginPath();
+  g.arc(32, 32, 24, 0, Math.PI * 2);
+  g.stroke();
   return new THREE.CanvasTexture(c);
 }
 
-/** Sibling planets: a dim gold diamond marker. */
-function siblingGlyphTexture(): THREE.Texture {
-  const S = 48, c = document.createElement("canvas");
-  c.width = c.height = S;
+function sunTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
   const g = c.getContext("2d")!;
-  g.strokeStyle = INK.gold; g.globalAlpha = 0.55; g.lineWidth = 2;
-  g.beginPath();
-  g.moveTo(S / 2, 6); g.lineTo(S - 6, S / 2); g.lineTo(S / 2, S - 6); g.lineTo(6, S / 2); g.closePath();
-  g.stroke();
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,246,214,1)");
+  grad.addColorStop(0.18, "rgba(255,214,120,0.85)");
+  grad.addColorStop(0.5, "rgba(255,180,80,0.25)");
+  grad.addColorStop(1, "rgba(255,170,70,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
+function discTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.62, "rgba(255,255,255,0.95)");
+  grad.addColorStop(0.82, "rgba(255,255,255,0.35)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(32, 32, 32, 0, Math.PI * 2); g.fill();
   return new THREE.CanvasTexture(c);
 }
 
@@ -69,8 +75,6 @@ export class StarField {
   onHover?: (index: number | null) => void;
   onPick?: (index: number | null) => void;
   onView?: (fovDeg: number) => void;
-  /** Fires with the view-centre direction (ICRS) on pan/projection — drives the compass tape. */
-  onLook?: (dir: Vec3) => void;
 
   private container: HTMLElement;
   private renderer: THREE.WebGLRenderer;
@@ -82,27 +86,16 @@ export class StarField {
   private exposure = 0;
   private mwPoints?: THREE.Points;
   private mwGeom?: THREE.BufferGeometry;
-  private rawMw: { dir: Vec3 }[] = [];
+  private rawMw: { dir: Vec3; brightness: number }[] = [];
   private selGroup = new THREE.Group();
   private overlayGroup = new THREE.Group();
   private figureGroup = new THREE.Group();
   private labelGroup = new THREE.Group();
   private sunGroup = new THREE.Group();
   private bodyGroup = new THREE.Group();
-  private pathGroup = new THREE.Group();  // crawling orbital tracks (Phase 6R)
-  private rawPaths: { pts: Vec3[]; color: number; periodYears: number }[] = [];
-  // per-path crawl state: projected polyline + a reusable dot buffer marched in loop()
-  private crawls: { proj: ([number, number, number] | null)[]; period: number; points: THREE.Points; buf: Float32Array }[] = [];
-  private plotTimeYears = 0;
-  private groundGroup = new THREE.Group(); // dome ground (B8; twilight glow removed in 6R)
-  private linkGroup = new THREE.Group();   // dotted link-lines between event bodies (6R)
-  private rawLinks: Vec3[][] = [];
-  private pulseGroup = new THREE.Group();  // one-shot event pulses (6R)
-  private arrivalStart = performance.now(); // the chart plots itself on open/arrival
-  private hostTex = hostGlyphTexture();
-  private sibTex = siblingGlyphTexture();
-  private phaseTexCache = new Map<number, THREE.Texture>();
-  private moonPhases: { sprite: THREE.Sprite; dir: Vec3; sunDir: Vec3 | null }[] = [];
+  private ringTex = ringTexture();
+  private sunTex = sunTexture();
+  private discTex = discTexture();
   private rawSunDir: Vec3 | null = null;
   private rawBodies: BodyMarker[] = [];
 
@@ -140,29 +133,25 @@ export class StarField {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(this.dpr);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setClearColor(0x000000, 1); // the plot's ground is pure black
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(this.fov, container.clientWidth / container.clientHeight, 0.1, 1000);
     this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
     this.orthoCam.position.set(0, 0, 1);
     this.orthoCam.lookAt(0, 0, 0);
-    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup, this.pathGroup, this.groundGroup, this.linkGroup, this.pulseGroup);
+    this.scene.add(this.selGroup, this.overlayGroup, this.figureGroup, this.labelGroup, this.sunGroup, this.bodyGroup);
 
-    // faint dotted celestial-equator ring for orientation (gnomonic only) — chart ink
+    // faint celestial-equator ring for orientation (gnomonic only)
     const eq = new THREE.BufferGeometry().setFromPoints(
       Array.from({ length: 161 }, (_, i) => {
         const a = (i / 160) * Math.PI * 2;
         return new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, 0);
       }),
     );
-    this.eqLine = new THREE.LineLoop(eq, new THREE.LineDashedMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.14, dashSize: 0.8, gapSize: 1.6 }));
-    this.eqLine.computeLineDistances();
+    this.eqLine = new THREE.LineLoop(eq, new THREE.LineBasicMaterial({ color: 0x12233a }));
     this.scene.add(this.eqLine);
 
     this.updateOrtho();
-    this.updateViewBasis(); // init the fisheye basis up front so it's never stale on entry
     this.applyLook();
     this.bind();
     this.loop();
@@ -221,10 +210,6 @@ export class StarField {
     this.setSelection(this.rawSel);
     this.layoutSun();
     this.layoutBodies();
-    this.layoutPaths();
-    this.layoutDrift();
-    this.layoutGround();
-    this.layoutLinks();
   }
 
   setProjection(mode: "gnomonic" | "fisheye" | "dome"): void {
@@ -234,7 +219,6 @@ export class StarField {
     this.updateOrtho();
     this.relayout();
     this.onView?.(this.fov);
-    this.onLook?.(this.lookDir());
   }
   getProjection(): "gnomonic" | "fisheye" | "dome" { return this.mode; }
 
@@ -263,7 +247,6 @@ export class StarField {
       if (this.mode === "gnomonic") this.applyLook();
       else if (this.mode === "fisheye") { this.updateViewBasis(); this.relayout(); }
       // dome is fixed to the local alt/az frame -- pan does not apply
-      this.onLook?.(this.lookDir());
     });
     el.addEventListener("wheel", (e) => { this.setFov(this.fov * (e.deltaY > 0 ? 1.1 : 1 / 1.1)); }, { passive: true });
   }
@@ -272,12 +255,6 @@ export class StarField {
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
     const cp = Math.cos(this.pitch);
     this.camera.lookAt(Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp);
-  }
-
-  /** Current view-centre direction in world (ICRS) coordinates. */
-  lookDir(): Vec3 {
-    const cp = Math.cos(this.pitch);
-    return [Math.cos(this.yaw) * cp, Math.sin(this.pitch), Math.sin(this.yaw) * cp];
   }
 
   setFov(fovDeg: number): void {
@@ -290,161 +267,82 @@ export class StarField {
 
   setStars(stars: StarPoint[]): void {
     this.rawStars = stars;
+    const N = stars.length;
+    const tnt = new Float32Array(N * 3), mag = new Float32Array(N), dir = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const s = stars[i];
+      const c = tint(s.bp_rp);
+      tnt[i * 3] = c[0]; tnt[i * 3 + 1] = c[1]; tnt[i * 3 + 2] = c[2];
+      mag[i] = s.mag;
+      dir[i * 3] = s.dir[0]; dir[i * 3 + 1] = s.dir[1]; dir[i * 3 + 2] = s.dir[2];
+    }
     if (!this.geom) {
       this.geom = new THREE.BufferGeometry();
-      // The plotted-star shader: DISCRETE ink classes (from plot.ts, computed CPU-side), all
-      // white ink, no glow/bloom/tone-map. Faint-to-mid classes are stepped dots; class 4 is
-      // a dot with one fine dotted ring; the ~20 brightest are concentric dotted-ring glyphs
-      // that counter-rotate very slowly (the reference's ringed nodes).
       this.starMat = new THREE.ShaderMaterial({
-        transparent: true, depthWrite: false, blending: THREE.NormalBlending,
-        uniforms: { uDpr: { value: this.dpr }, uTime: { value: 0 }, uArrival: { value: 10 } },
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: {
+          uDpr: { value: this.dpr }, uExposure: { value: this.exposure }, uZero: { value: MAG_ZERO_DEFAULT },
+          uSunDir: { value: new THREE.Vector3(1, 0, 0) }, uSunCos: { value: 2 }, uSunOn: { value: 0 },
+        },
         vertexShader: `
-          attribute float vis; attribute float cls; attribute float rank; attribute float seed;
-          uniform float uDpr, uArrival;
-          varying float vCls; varying float vRank; varying float vSeed;
+          attribute vec3 tint; attribute float mag; attribute float vis; attribute vec3 dir;
+          uniform float uDpr, uExposure, uZero;
+          uniform vec3 uSunDir; uniform float uSunCos, uSunOn;
+          varying vec3 vC; varying float vBloom;
           void main(){
-            vCls = cls; vRank = rank; vSeed = seed;
-            float ps =
-              rank > 0.5 ? mix(30.0, 18.0, clamp((rank - 1.0) / 9.0, 0.0, 1.0)) :
-              cls > 3.5 ? 10.0 :
-              cls > 2.5 ? 4.6 :
-              cls > 1.5 ? 3.2 :
-              cls > 0.5 ? 2.2 : 1.4;
-            // ARRIVAL SELF-PLOT: the chart draws itself, brightest classes first, with a
-            // small per-star jitter so each class stipples in rather than popping at once.
-            float delay =
-              (rank > 0.5 ? 0.08 : cls > 3.5 ? 0.25 : cls > 2.5 ? 0.45 : cls > 1.5 ? 0.65 : cls > 0.5 ? 0.85 : 1.05)
-              + fract(abs(seed) * 13.7) * 0.3;
-            if (uArrival < delay) ps = 0.0;
+            float flux = pow(2.512, (uZero + uExposure) - mag);   // relative flux (huge range)
+            float lum = flux / (flux + 1.0);                       // Reinhard tone-map -> [0,1)
+            // host-star glare: stars within the glare radius of an up sun wash out
+            float wash = uSunOn * smoothstep(uSunCos - 0.06, uSunCos + 0.02, dot(dir, uSunDir));
+            lum *= (1.0 - 0.98 * wash);
+            vBloom = smoothstep(0.86, 1.0, lum);
+            vC = tint * clamp(lum * 1.15, 0.045, 1.0);             // floor keeps faint stars visible
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = ps * uDpr * vis;  // vis=0 hides off-view points
+            gl_PointSize = (1.4 + 2.4 * lum + 3.4 * vBloom) * uDpr * vis; // vis=0 hides off-view points
           }`,
         fragmentShader: `
-          varying float vCls; varying float vRank; varying float vSeed;
-          uniform float uTime;
-          float ringInk(vec2 q, float r0, float w, float n, float phase){
-            float radial = 1.0 - smoothstep(w * 0.5, w, abs(length(q) - r0));
-            float f = abs(fract((atan(q.y, q.x) + phase) * n * 0.15915494) - 0.5);
-            return radial * (1.0 - smoothstep(0.16, 0.30, f));
-          }
+          varying vec3 vC; varying float vBloom;
           void main(){
-            vec2 q = gl_PointCoord - vec2(0.5);
-            float r = length(q);
-            float ink;
-            if (vRank > 0.5) {          // ringed node: core + counter-rotating dotted rings
-              float rot = (mod(vRank, 2.0) * 2.0 - 1.0) * (0.04 + 0.07 * fract(vSeed * 7.31));
-              float ph = vSeed * 6.2832 + uTime * rot;
-              ink = 1.0 - smoothstep(0.06, 0.09, r);
-              ink = max(ink, ringInk(q, 0.22, 0.06, 10.0, ph));
-              ink = max(ink, ringInk(q, 0.40, 0.06, 16.0, -ph * 0.7));
-              if (vRank < 3.5) ink = max(ink, 0.7 * ringInk(q, 0.31, 0.05, 13.0, ph * 0.5));
-            } else if (vCls > 3.5) {    // bright: dot + one fine dotted ring
-              ink = 1.0 - smoothstep(0.11, 0.16, r);
-              ink = max(ink, ringInk(q, 0.36, 0.07, 10.0, vSeed * 6.2832));
-            } else {                    // stipple dot
-              ink = 1.0 - smoothstep(0.34, 0.48, r);
-            }
-            float a = ink * (vCls < 0.5 && vRank < 0.5 ? 0.6 : 0.88);
-            if (a < 0.02) discard;
-            gl_FragColor = vec4(vec3(0.95), a);
+            vec2 d = gl_PointCoord - vec2(0.5); float r = length(d);
+            if (r > 0.5) discard;
+            float core = smoothstep(0.5, 0.06, r);
+            float halo = vBloom * smoothstep(0.5, 0.0, r) * 0.6;   // soft glow only on bright stars
+            gl_FragColor = vec4(vC, core + halo);
           }`,
       });
       this.points = new THREE.Points(this.geom, this.starMat);
       this.points.frustumCulled = false;
       this.scene.add(this.points);
     }
-    this.applyClasses();
+    this.geom.setAttribute("tint", new THREE.BufferAttribute(tnt, 3));
+    this.geom.setAttribute("mag", new THREE.BufferAttribute(mag, 1));
+    this.geom.setAttribute("dir", new THREE.BufferAttribute(dir, 3));
     this.layoutStars();
   }
 
-  /** Re-derive each star's discrete ink class (plot.ts seam) at the current plate depth. */
-  private applyClasses(): void {
-    if (!this.geom) return;
-    const N = this.rawStars.length;
-    const cls = new Float32Array(N), rank = new Float32Array(N), seed = new Float32Array(N);
-    const ranks = ringedRanks(this.rawStars.map((s) => s.mag));
-    for (let i = 0; i < N; i++) {
-      cls[i] = magClass(this.rawStars[i]!.mag, this.exposure);
-      rank[i] = ranks.get(i) ?? 0;
-      seed[i] = (Math.sin(i * 127.1) * 43758.5453) % 1;
-    }
-    this.geom.setAttribute("cls", new THREE.BufferAttribute(cls, 1));
-    this.geom.setAttribute("rank", new THREE.BufferAttribute(rank, 1));
-    this.geom.setAttribute("seed", new THREE.BufferAttribute(seed, 1));
-  }
-
-  /** The host star's position + glare radius. Photographic glow is gone (Phase 6R): glare is
-   *  now CHART NOTATION — a faint gold dotted circle of the glare radius around the host. */
-  private glareRadiusDeg = 14;
+  /** Host-star glare: wash out stars within radiusDeg of the sun when it is up (dir set). */
   setSun(dirIcrs: Vec3 | null, radiusDeg: number): void {
     this.rawSunDir = dirIcrs;
-    this.glareRadiusDeg = radiusDeg;
+    if (this.starMat) {
+      this.starMat.uniforms.uSunOn!.value = dirIcrs ? 1 : 0;
+      if (dirIcrs) {
+        const n = Math.hypot(dirIcrs[0], dirIcrs[1], dirIcrs[2]) || 1;
+        this.starMat.uniforms.uSunDir!.value.set(dirIcrs[0] / n, dirIcrs[1] / n, dirIcrs[2] / n);
+        this.starMat.uniforms.uSunCos!.value = Math.cos((radiusDeg * Math.PI) / 180);
+      }
+    }
     this.layoutSun();
-    this.layoutGround();
   }
 
   private layoutSun(): void {
     this.sunGroup.clear();
     if (!this.rawSunDir) return;
-    // the glare radius as a small-circle of directions around the host, projected per-mode
-    const s = this.rawSunDir;
-    const up: Vec3 = Math.abs(s[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
-    const e1: Vec3 = [s[1] * up[2] - s[2] * up[1], s[2] * up[0] - s[0] * up[2], s[0] * up[1] - s[1] * up[0]];
-    const n1 = Math.hypot(...e1) || 1; e1[0] /= n1; e1[1] /= n1; e1[2] /= n1;
-    const e2: Vec3 = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
-    const rad = (this.glareRadiusDeg * Math.PI) / 180, cr = Math.cos(rad), sr = Math.sin(rad);
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i <= 72; i++) {
-      const a = (i / 72) * Math.PI * 2;
-      const d: Vec3 = [
-        cr * s[0] + sr * (Math.cos(a) * e1[0] + Math.sin(a) * e2[0]),
-        cr * s[1] + sr * (Math.cos(a) * e1[1] + Math.sin(a) * e2[1]),
-        cr * s[2] + sr * (Math.cos(a) * e1[2] + Math.sin(a) * e2[2]),
-      ];
-      const p = this.projectScene(d);
-      if (!p) { if (pts.length >= 2) this.flushGlare(pts); pts.length = 0; continue; }
-      pts.push(new THREE.Vector3(p[0], p[1], p[2]));
-    }
-    if (pts.length >= 2) this.flushGlare(pts);
-  }
-
-  private flushGlare(pts: THREE.Vector3[]): void {
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([...pts]),
-      new THREE.LineDashedMaterial({ color: INK_HEX.gold, transparent: true, opacity: 0.18, dashSize: 0.7, gapSize: 1.6 }));
-    line.computeLineDistances();
-    this.sunGroup.add(line);
-  }
-
-  /** Dome ground: black beyond the horizon and a hard horizon line (chart chrome). The
-   *  photographic twilight glow is removed (Phase 6R: atmosphere-lite is out). */
-  private layoutGround(): void {
-    this.groundGroup.clear();
-    if (this.mode !== "dome") { this.groundGroup.visible = false; return; }
-    this.groundGroup.visible = true;
-    // mask the below-horizon corners in pure ground-black
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(R * 1.002, R * 2.8, 120),
-      new THREE.MeshBasicMaterial({ color: 0x000000, depthWrite: false, side: THREE.DoubleSide }));
-    ring.position.set(0, 0, -0.5); ring.renderOrder = -1;
-    this.groundGroup.add(ring);
-    // the hard horizon line
-    const hz = new THREE.LineLoop(
-      new THREE.BufferGeometry().setFromPoints(Array.from({ length: 129 }, (_, i) => {
-        const a = (i / 128) * Math.PI * 2; return new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, 0);
-      })),
-      new THREE.LineBasicMaterial({ color: 0xf0ece1, transparent: true, opacity: 0.3 }));
-    hz.renderOrder = 0;
-    this.groundGroup.add(hz);
-    // in dome the horizon IS the compass: cardinal letters just beyond the edge
-    for (const [az, letter] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]] as [number, string][]) {
-      const a = (az * Math.PI) / 180;
-      const lab = makeTextSprite(letter, "#f2efe6");
-      lab.center.set(0.5, 0.5);
-      lab.position.set(Math.sin(a) * R * 1.07, Math.cos(a) * R * 1.07, 0.2);
-      this.groundGroup.add(lab);
-    }
+    const p = this.projectScene(this.rawSunDir);
+    if (!p) return;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sunTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    sp.position.set(p[0], p[1], p[2]);
+    sp.scale.setScalar(this.mode === "gnomonic" ? 26 : 20);
+    this.sunGroup.add(sp);
   }
 
   /** Host star, moons, sibling planets -- drawn in every projection at their correct angular
@@ -456,205 +354,20 @@ export class StarField {
 
   private layoutBodies(): void {
     this.bodyGroup.clear();
-    this.moonPhases = [];
-    const host = this.rawBodies.find((b) => b.kind === "host_star");
-    const hostDir = host ? host.dir : this.rawSunDir;
-    const perRad = this.mode === "gnomonic" ? R : this.mode === "fisheye" ? R / this.fisheyeMax : R / (Math.PI / 2);
     for (const b of this.rawBodies) {
       const p = this.projectScene(b.dir);
       if (!p) continue;
-      const theta = (b.diamDeg * Math.PI) / 180; // true angular diameter, radians
-      if (b.kind === "host_star") {
-        // the largest concentric-ring glyph, unmistakable, GOLD
-        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.hostTex, transparent: true, depthWrite: false }));
-        sp.position.set(p[0], p[1], p[2]);
-        sp.scale.setScalar(Math.max(26, Math.min(60, theta * perRad * 3)));
-        this.bodyGroup.add(sp);
-      } else if (b.kind === "moon") {
-        // dotted-circle glyph sized by angular-size CLASS, phase drawn diagrammatically (BLUSH)
-        const sizeClass = b.diamDeg > 0.4 ? 24 : b.diamDeg > 0.15 ? 19 : b.diamDeg > 0.05 ? 14.5 : 11;
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-          map: this.phaseTexture(Math.round((b.illum ?? 1) * 20)), transparent: true, depthWrite: false }));
-        sprite.position.set(p[0], p[1], p[2]);
-        sprite.scale.setScalar(sizeClass);
-        this.bodyGroup.add(sprite);
-        this.moonPhases.push({ sprite, dir: b.dir, sunDir: hostDir });
-      } else {
-        // sibling planet: dim gold diamond marker
-        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.sibTex, transparent: true, depthWrite: false }));
-        sp.position.set(p[0], p[1], p[2]);
-        sp.scale.setScalar(7.5);
-        this.bodyGroup.add(sp);
-      }
-      const lab = makeTextSprite(b.name.toUpperCase(), b.kind === "host_star" ? INK.gold : b.kind === "moon" ? INK.blush : "#a99a66");
+      const theta = (b.diamDeg * Math.PI) / 180; // angular diameter, radians
+      const perRad = this.mode === "gnomonic" ? R : this.mode === "fisheye" ? R / this.fisheyeMax : R / (Math.PI / 2);
+      const size = Math.max(1.3, Math.min(45, theta * perRad)); // floor = a visible point
+      const color = b.kind === "host_star" ? 0xffe08a : b.kind === "moon" ? 0xd6dbe2 : 0x9fc0ff;
+      const disc = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.discTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      disc.position.set(p[0], p[1], p[2]);
+      disc.scale.setScalar(size);
+      this.bodyGroup.add(disc);
+      const lab = makeTextSprite(b.name, b.kind === "host_star" ? "#ffe08a" : "#c8d2e0");
       lab.position.set(p[0], p[1], p[2]);
       this.bodyGroup.add(lab);
-    }
-  }
-
-  /** Diagrammatic moon-phase glyph (BLUSH plate): a dotted circle with the illuminated
-   *  fraction as a filled lune anchored lit-side +x — chart notation, not a lit 3D ball.
-   *  Cached per 5% bucket; the sprite is rotated so the lit side faces the host. */
-  private phaseTexture(bucket: number): THREE.Texture {
-    const cached = this.phaseTexCache.get(bucket);
-    if (cached) return cached;
-    const frac = Math.max(0, Math.min(1, bucket / 20));
-    const S = 96, c = document.createElement("canvas");
-    c.width = c.height = S;
-    const g = c.getContext("2d")!;
-    const cx = S / 2, cy = S / 2, rad = S / 2 - 8;
-    dottedCircle(g, cx, cy, rad, 18, 2.1, INK.blush);
-    if (frac > 0.02) {
-      g.fillStyle = INK.blush; g.globalAlpha = 0.62;
-      g.beginPath();
-      g.arc(cx, cy, rad - 5, -Math.PI / 2, Math.PI / 2, false);   // sun-facing (+x) limb
-      const rx = (rad - 5) * (1 - 2 * frac);                      // terminator ellipse (signed)
-      g.ellipse(cx, cy, Math.abs(rx), rad - 5, 0, Math.PI / 2, -Math.PI / 2, rx > 0);
-      g.fill();
-      g.globalAlpha = 1;
-    }
-    const tex = new THREE.CanvasTexture(c);
-    this.phaseTexCache.set(bucket, tex);
-    return tex;
-  }
-
-  /** Crawling orbital tracks (Phase 6R): each body's path over ONE of its own periods,
-   *  sampled evenly in time, drawn as MARCHING DOTS whose crawl speed is the body's TRUE
-   *  angular rate (the reference's marching-dots language driven by real dynamics). */
-  setPaths(paths: { pts: Vec3[]; color: number; periodYears: number }[]): void {
-    this.rawPaths = paths;
-    this.pathGroup.clear();
-    this.crawls = [];
-    const M = 48; // marching dots per path
-    for (const path of paths) {
-      const buf = new Float32Array(M * 3);
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute("position", new THREE.BufferAttribute(buf, 3));
-      const points = new THREE.Points(geom, new THREE.PointsMaterial({
-        color: path.color, size: 2.6 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.8, depthWrite: false }));
-      points.frustumCulled = false;
-      this.pathGroup.add(points);
-      this.crawls.push({ proj: [], period: Math.max(path.periodYears, 1e-9), points, buf });
-    }
-    this.layoutPaths();
-  }
-
-  /** Reproject each path's polyline for the active projection (crawl positions are then
-   *  interpolated from it every frame in loop()). */
-  private layoutPaths(): void {
-    for (let k = 0; k < this.crawls.length; k++) {
-      this.crawls[k]!.proj = this.rawPaths[k]!.pts.map((d) => this.projectScene(d));
-    }
-  }
-
-  /** The sim time that drives the crawl phase (the body's true angular rate). */
-  setPlotTime(tYears: number): void { this.plotTimeYears = tYears; }
-
-  /** Epoch-drift ghost tracks: where the fast movers drift over the comparator span. ONE
-   *  Points object for the whole layer (hundreds of segments, a single draw call), dotted
-   *  dim white — the star field's own trajectories. */
-  private driftPts?: THREE.Points;
-  private driftGeom?: THREE.BufferGeometry;
-  private rawDrift: { a: Vec3; b: Vec3 }[] = [];
-  setDriftTracks(segs: { a: Vec3; b: Vec3 }[]): void {
-    this.rawDrift = segs;
-    if (!this.driftPts) {
-      this.driftGeom = new THREE.BufferGeometry();
-      this.driftPts = new THREE.Points(this.driftGeom, new THREE.PointsMaterial({
-        color: 0xffffff, size: 1.5 * this.dpr, sizeAttenuation: false,
-        transparent: true, opacity: 0.4, depthWrite: false }));
-      this.driftPts.frustumCulled = false;
-      this.driftPts.renderOrder = -1;
-      this.scene.add(this.driftPts);
-    }
-    this.driftPts.visible = segs.length > 0;
-    this.layoutDrift();
-  }
-
-  private layoutDrift(): void {
-    if (!this.driftGeom) return;
-    const K = 10; // dots per track
-    const buf = new Float32Array(this.rawDrift.length * K * 3);
-    let n = 0;
-    for (const s of this.rawDrift) {
-      const pa = this.projectScene(s.a), pb = this.projectScene(s.b);
-      if (!pa || !pb) continue;
-      for (let k = 0; k < K; k++) {
-        const t = k / (K - 1);
-        buf[n++] = pa[0] + (pb[0] - pa[0]) * t;
-        buf[n++] = pa[1] + (pb[1] - pa[1]) * t;
-        buf[n++] = pa[2] + (pb[2] - pa[2]) * t;
-      }
-    }
-    this.driftGeom.setAttribute("position", new THREE.BufferAttribute(buf, 3));
-    this.driftGeom.setDrawRange(0, n / 3);
-    this.driftGeom.attributes.position!.needsUpdate = true;
-  }
-
-  /** Replay the arrival self-plot: stars populate by brightness class, orbits trace in. */
-  beginArrival(): void { this.arrivalStart = performance.now(); }
-
-  /** Dotted signal-plate link-lines between the bodies of an imminent event (EVENTS mode). */
-  setLinkLines(arcs: Vec3[][]): void {
-    this.rawLinks = arcs;
-    this.layoutLinks();
-  }
-
-  private layoutLinks(): void {
-    this.linkGroup.clear();
-    for (const arc of this.rawLinks) {
-      const pts = this.projArc(arc);
-      if (!pts) continue;
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineDashedMaterial({ color: INK_HEX.signal, transparent: true, opacity: 0.55, dashSize: 0.5, gapSize: 1.1 }));
-      line.computeLineDistances();
-      this.linkGroup.add(line);
-    }
-  }
-
-  /** One-shot event pulse: an expanding, fading dotted ring at each direction (the moment
-   *  an eclipse/conjunction registers). Self-removing. */
-  pulseAt(dirs: Vec3[]): void {
-    for (const d of dirs) {
-      const p = this.projectScene(d);
-      if (!p) continue;
-      const NPTS = 24, arr = new Float32Array(NPTS * 3);
-      for (let k = 0; k < NPTS; k++) {
-        const a = (k / NPTS) * Math.PI * 2;
-        arr[k * 3] = Math.cos(a) * 3; arr[k * 3 + 1] = Math.sin(a) * 3; arr[k * 3 + 2] = 0;
-      }
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute("position", new THREE.BufferAttribute(arr, 3));
-      const mat = new THREE.PointsMaterial({ color: INK_HEX.signal, size: 2.4 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.9, depthWrite: false });
-      const pts = new THREE.Points(geom, mat);
-      pts.position.set(p[0], p[1], p[2]);
-      pts.userData.birth = performance.now();
-      pts.frustumCulled = false;
-      this.pulseGroup.add(pts);
-    }
-  }
-
-  private marchCrawls(): void {
-    const M = 48;
-    // orbits TRACE IN after the stars during the arrival self-plot
-    const arrival = Math.min(1, Math.max(0, ((performance.now() - this.arrivalStart) / 1000 - 0.9) / 0.6));
-    for (const c of this.crawls) {
-      const N = c.proj.length - 1;
-      if (N < 1) continue;
-      (c.points.geometry as THREE.BufferGeometry).setDrawRange(0, Math.floor(M * arrival));
-      const frac = ((this.plotTimeYears / c.period) % 1 + 1) % 1;
-      const pos = c.buf;
-      for (let k = 0; k < M; k++) {
-        const u = (k / M + frac) % 1;
-        const x = u * N, i0 = Math.floor(x), t = x - i0;
-        const a = c.proj[i0], b = c.proj[Math.min(i0 + 1, N)];
-        if (!a || !b) { pos[k * 3] = 1e6; pos[k * 3 + 1] = 0; pos[k * 3 + 2] = 0; continue; }
-        pos[k * 3] = a[0] + (b[0] - a[0]) * t;
-        pos[k * 3 + 1] = a[1] + (b[1] - a[1]) * t;
-        pos[k * 3 + 2] = a[2] + (b[2] - a[2]) * t;
-      }
-      (c.points.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
     }
   }
 
@@ -672,30 +385,37 @@ export class StarField {
     this.geom.attributes.position.needsUpdate = true;
   }
 
-  /** Plate depth (stops): shifts the class thresholds — a deeper plate promotes stars a
-   *  class up. Re-classes on the CPU (rare: slider moves only). */
+  /** Live exposure/gain (stops): shifts the magnitude that reads as mid-brightness. */
   setExposure(stops: number): void {
     this.exposure = stops;
-    this.applyClasses();
+    if (this.starMat) this.starMat.uniforms.uExposure!.value = stops;
   }
   getExposure(): number { return this.exposure; }
 
-  /** Milky Way as a stipple density field: every dot the same small white ink; the structure
-   *  is carried entirely by dot density (milkyWayStipple). Projected like stars, so it works
-   *  in every projection and moves with the vantage. Empty array hides it. */
-  setMilkyWayPoints(pts: { dir: Vec3 }[]): void {
+  /** Milky Way as a structured point cloud (directions + brightness). Projected like stars,
+   *  so it renders in every projection and moves with the vantage. Empty array hides it. */
+  setMilkyWayPoints(pts: { dir: Vec3; brightness: number }[]): void {
     this.rawMw = pts;
     if (!this.mwPoints) {
       this.mwGeom = new THREE.BufferGeometry();
-      const mat = new THREE.PointsMaterial({
-        color: 0xffffff, size: 1.4 * this.dpr, sizeAttenuation: false,
-        transparent: true, opacity: 0.3, depthWrite: false,
+      const mat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: { uDpr: { value: this.dpr } },
+        vertexShader: `attribute float b; varying float vB; uniform float uDpr;
+          void main(){ vB = b; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = 2.4 * uDpr; }`,
+        fragmentShader: `varying float vB; void main(){ vec2 d = gl_PointCoord - vec2(0.5);
+          if (length(d) > 0.5) discard;
+          gl_FragColor = vec4(vec3(0.40, 0.44, 0.58) * vB, 0.5 * vB); }`,
       });
       this.mwPoints = new THREE.Points(this.mwGeom, mat);
       this.mwPoints.frustumCulled = false;
       this.mwPoints.renderOrder = -2;
       this.scene.add(this.mwPoints);
     }
+    const bb = new Float32Array(pts.length);
+    for (let i = 0; i < pts.length; i++) bb[i] = pts[i]!.brightness;
+    this.mwGeom!.setAttribute("b", new THREE.BufferAttribute(bb, 1));
     this.mwPoints!.visible = pts.length > 0;
     this.layoutMilkyWay();
   }
@@ -713,49 +433,16 @@ export class StarField {
     this.mwGeom.attributes.position.needsUpdate = true;
   }
 
-  /** Selection (Phase 6R red budget: red = THE active object only). The primary selection
-   *  gets a thin red bracket-corner targeting box that SELF-DRAWS; every other selected
-   *  object (co-moving groups, alignments) gets a small quiet blush dot — never red. */
-  private selBirth = 0;
   setSelection(dirs: Vec3[]): void {
-    const changed = dirs.length !== this.rawSel.length || (dirs[0] !== this.rawSel[0]);
     this.rawSel = dirs;
-    if (changed) this.selBirth = performance.now();
     this.selGroup.clear();
-    if (!dirs.length) return;
-    // primary: the reference's targeting box — 4 bracket corners, red, draw-in
-    const p0 = this.projectScene(dirs[0]!);
-    if (p0) {
-      const s = this.mode === "gnomonic" ? 4.2 : 3.6, arm = s * 0.7;
-      const seg: number[] = [];
-      for (const [cx, cy] of [[-s, -s], [s, -s], [s, s], [-s, s]]) {
-        seg.push(cx!, cy!, 0, cx! - Math.sign(cx!) * arm, cy!, 0);
-        seg.push(cx!, cy!, 0, cx!, cy! - Math.sign(cy!) * arm, 0);
-      }
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(seg), 3));
-      const box = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
-        color: INK_HEX.signal, transparent: true, opacity: 0.9 }));
-      box.position.set(p0[0], p0[1], p0[2]);
-      box.userData.reticle = true;
-      box.frustumCulled = false;
-      this.selGroup.add(box);
-    }
-    // secondaries: one quiet blush dot layer (a proposed group is a suggestion, not a siren)
-    if (dirs.length > 1) {
-      const pos: number[] = [];
-      for (let i = 1; i < dirs.length; i++) {
-        const p = this.projectScene(dirs[i]!);
-        if (p) pos.push(p[0], p[1], p[2]);
-      }
-      if (pos.length) {
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
-        const pts = new THREE.Points(g, new THREE.PointsMaterial({
-          color: INK_HEX.blush, size: 3 * this.dpr, sizeAttenuation: false, transparent: true, opacity: 0.7, depthWrite: false }));
-        pts.frustumCulled = false;
-        this.selGroup.add(pts);
-      }
+    for (const d of dirs) {
+      const p = this.projectScene(d);
+      if (!p) continue;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ringTex, transparent: true, depthWrite: false }));
+      sp.position.set(p[0], p[1], p[2]);
+      sp.scale.setScalar(this.mode === "gnomonic" ? 6 : 5);
+      this.selGroup.add(sp);
     }
   }
 
@@ -765,23 +452,23 @@ export class StarField {
     return out;
   }
 
-  /** Measurement overlays: dotted white ink (a geodesic arc per polyline). */
+  /** Each overlay is a polyline of inertial unit directions (a geodesic arc). */
   setOverlays(arcs: Vec3[][]): void {
     this.rawOverlays = arcs;
     this.overlayGroup.clear();
     for (const arc of arcs) {
       const pts = this.projArc(arc);
-      if (pts) this.overlayGroup.add(dottedLine(pts, 0.8));
+      if (pts) this.overlayGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x8fe3ff })));
     }
   }
 
-  /** User constellations / figures: dotted white ink, slightly quieter than measurements. */
+  /** Annotation figure edges (constellations / sketches), drawn warm to distinguish them. */
   setFigures(arcs: Vec3[][]): void {
     this.rawFigures = arcs;
     this.figureGroup.clear();
     for (const arc of arcs) {
       const pts = this.projArc(arc);
-      if (pts) this.figureGroup.add(dottedLine(pts, 0.6));
+      if (pts) this.figureGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffcf6b })));
     }
   }
 
@@ -808,10 +495,6 @@ export class StarField {
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
     const cam = this.activeCam();
-    if (this.starMat) {
-      this.starMat.uniforms.uTime!.value = performance.now() / 1000;                       // ring rotation
-      this.starMat.uniforms.uArrival!.value = (performance.now() - this.arrivalStart) / 1000; // self-plot
-    }
     if (this.points) {
       this.ray.params.Points!.threshold = this.mode === "gnomonic"
         ? (this.fov / 60) * 1.4
@@ -821,42 +504,6 @@ export class StarField {
       const idx = hit ? hit.index ?? null : null;
       if (idx !== this.hoverIndex) { this.hoverIndex = idx; this.onHover?.(idx); }
     }
-    // orient each moon's phase so its lit limb faces the host star, in screen space
-    if (this.moonPhases.length) {
-      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
-      const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
-      for (const mp of this.moonPhases) {
-        if (!mp.sunDir) continue;
-        const m = this.projectScene(mp.dir), s = this.projectScene(mp.sunDir);
-        if (!m || !s) continue;
-        const dx = s[0] - m[0], dy = s[1] - m[1], dz = s[2] - m[2];
-        (mp.sprite.material as THREE.SpriteMaterial).rotation =
-          Math.atan2(dx * up.x + dy * up.y + dz * up.z, dx * right.x + dy * right.y + dz * right.z);
-      }
-    }
-    // targeting box: self-draws corner-by-corner, closes onto the star, breathes quietly
-    if (this.selGroup.children.length) {
-      const now = performance.now();
-      const reveal = Math.min(1, (now - this.selBirth) / 350);
-      for (const c of this.selGroup.children) {
-        if (!c.userData.reticle) continue;
-        ((c as THREE.LineSegments).geometry as THREE.BufferGeometry)
-          .setDrawRange(0, Math.max(4, Math.floor(16 * reveal / 4) * 4));
-        c.scale.setScalar((1 + (1 - reveal) * 0.8) * (1 + 0.045 * Math.sin(now * 0.003)));
-      }
-    }
-    // one-shot event pulses: expand + fade, then self-remove
-    if (this.pulseGroup.children.length) {
-      const now = performance.now();
-      for (const c of [...this.pulseGroup.children]) {
-        const age = (now - ((c.userData.birth as number) ?? now)) / 900;
-        if (age >= 1) { this.pulseGroup.remove(c); continue; }
-        c.scale.setScalar(1 + age * 3.2);
-        ((c as THREE.Points).material as THREE.PointsMaterial).opacity = 0.9 * (1 - age);
-      }
-    }
-    // orbital tracks: marching dots at each body's true angular rate
-    this.marchCrawls();
     this.renderer.render(this.scene, cam);
   };
 
@@ -865,15 +512,6 @@ export class StarField {
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
-}
-
-/** A dotted-ink polyline (the chart's line language). */
-function dottedLine(pts: THREE.Vector3[], opacity: number): THREE.Line {
-  const line = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineDashedMaterial({ color: 0xffffff, transparent: true, opacity, dashSize: 0.55, gapSize: 1.0 }));
-  line.computeLineDistances();
-  return line;
 }
 
 function makeTextSprite(text: string, color = "#ffe1a3"): THREE.Sprite {

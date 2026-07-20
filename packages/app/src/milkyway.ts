@@ -28,55 +28,41 @@ export function milkyWayGeometry(observerHelioPc: Vec3): MilkyWayGeometry {
   return { diskNormalIcrs, galacticCenterIcrs, observerGalcenKpc: gc };
 }
 
-export interface StipplePoint { dir: Vec3 }
+export interface BandPoint { dir: Vec3; brightness: number }
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-
-/**
- * The band's surface-density model (Phase 6R): in a stipple chart STRUCTURE IS DENSITY —
- * every dot is the same ink; brightness is encoded by how many dots land there. Dense in the
- * galactic plane thinning with latitude, a denser bulge toward the centre, the dust lane as
- * a SPARSER channel along the mid-plane near the centre, low-frequency longitudinal
- * patchiness. phi = longitude from the galactic centre, beta = latitude (radians).
- * Deterministic (fixed patch phases). Exported for tests.
- */
-export function stippleDensity(phi: number, beta: number): number {
-  const centerness = 0.5 * (1 + Math.cos(phi));                 // 1 toward centre, 0 anticentre
-  const width = 0.055 + 0.15 * centerness;                       // band half-width narrows outward
-  const base = Math.exp(-((beta / width) ** 2));
-  const bulge = 1.7 * Math.exp(-((phi / 0.5) ** 2) - ((beta / 0.15) ** 2));
-  const dust = 1 - 0.8 * centerness * Math.exp(-(((beta - 0.012) / 0.03) ** 2)); // sparse channel
-  const patch = Math.max(0.15, 0.62 + 0.38 * Math.sin(3 * phi + 1.1) + 0.24 * Math.sin(7 * phi + 4.2));
-  return (base * (0.25 + 0.75 * centerness) + bulge) * dust * patch;
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-// R2 low-discrepancy sequence increments (plastic constant) — evenly spread, blue-noise-like.
-const R2A1 = 0.7548776662466927, R2A2 = 0.5698402909980532;
-
 /**
- * Sample the band as a stipple field: candidates from a low-discrepancy sequence over
- * (longitude, latitude), kept by rejection against stippleDensity — dots stay evenly spaced
- * (no clumping) and their DENSITY draws the structure. Directions are built on the vantage
- * basis, so the band still moves with relocation. Deterministic for a given seed.
+ * Sample the Milky Way band as a point cloud oriented by the observer's vantage (so it moves
+ * with relocation). Structure: a bulge toward the galactic center, a dust lane darkening the
+ * mid-plane near the center, band width narrowing toward the anticenter, low-frequency
+ * longitudinal patchiness. Each point is an ICRS direction + a brightness in ~[0, 1.5]; the
+ * renderer projects them like stars, so the band works in every projection.
  */
-export function milkyWayStipple(geo: MilkyWayGeometry, n = 9000, seed = 20260702): StipplePoint[] {
+export function milkyWayBand(geo: MilkyWayGeometry, n = 4000, seed = 20260702): BandPoint[] {
   const C = geo.galacticCenterIcrs, N = geo.diskNormalIcrs, T = normalize(cross(N, C));
-  const out: StipplePoint[] = [];
-  const DMAX = 2.2; // just above the density model's max, for rejection
-  let u = (seed % 100000) / 100000, v = ((seed / 7) % 100000) / 100000;
-  for (let i = 0; out.length < n && i < n * 40; i++) {
-    u = (u + R2A1) % 1; v = (v + R2A2) % 1;
-    const phi = (u * 2 - 1) * Math.PI;
-    const beta = (v - 0.5) * 0.9;                                // +/- 0.45 rad ~ +/- 26 deg
-    const gate = (((i + 1) * 2654435761) >>> 9) % 8388608 / 8388608; // deterministic per-candidate
-    if (gate * DMAX > stippleDensity(phi, beta)) continue;
+  const r = mulberry32(seed);
+  const p1 = r() * 6.28, p2 = r() * 6.28;
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(6.2831853 * r());
+  const out: BandPoint[] = [];
+  for (let i = 0; i < n; i++) {
+    const phi = (r() * 2 - 1) * Math.PI;                         // galactic longitude from center
+    const centerness = 0.5 * (1 + Math.cos(phi));                // 1 toward centre, 0 anticentre
+    const width = 0.03 + 0.11 * centerness;                       // band half-width narrows outward
+    const beta = gauss() * width;                                // latitude off the plane
+    const dust = 1 - 0.55 * centerness * Math.exp(-((beta / 0.022) ** 2)); // dust lane near centre plane
+    const patch = Math.max(0.12, 0.55 + 0.4 * Math.sin(3 * phi + p1) + 0.28 * Math.sin(6 * phi + p2) + 0.2 * (r() - 0.5));
+    const brightness = (0.22 + 0.95 * centerness) * dust * patch;
     const cb = Math.cos(beta), sb = Math.sin(beta), cp = Math.cos(phi), sp = Math.sin(phi);
-    out.push({
-      dir: normalize([
-        cb * (cp * C[0] + sp * T[0]) + sb * N[0],
-        cb * (cp * C[1] + sp * T[1]) + sb * N[1],
-        cb * (cp * C[2] + sp * T[2]) + sb * N[2],
-      ]),
-    });
+    const dir = normalize([
+      cb * (cp * C[0] + sp * T[0]) + sb * N[0],
+      cb * (cp * C[1] + sp * T[1]) + sb * N[1],
+      cb * (cp * C[2] + sp * T[2]) + sb * N[2],
+    ]);
+    out.push({ dir, brightness });
   }
   return out;
 }
